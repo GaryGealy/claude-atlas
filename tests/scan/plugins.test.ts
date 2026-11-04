@@ -95,7 +95,36 @@ describe('scanPlugins', () => {
     const { sources, items, pluginMcp } = await scan(h, null);
     expect(sources.find((x) => x.id === 'plugin:flat')?.plugin?.marketplace).toBe('mk');
     expect(items.some((i) => i.kind === 'hook' && i.sourceId === 'plugin:flat' && i.name === 'SessionStart')).toBe(true);
-    expect(pluginMcp.filter((m) => m.sourceId === 'plugin:flat')).toHaveLength(2);
+    expect(pluginMcp.filter((m) => m.sourceId === 'plugin:flat')).toEqual([
+      { sourceId: 'plugin:flat', json: { mcpServers: { srv: { command: 'x', env: { TOKEN: 'secret' } } } } },
+      { sourceId: 'plugin:flat', json: { mcpServers: { other: { url: 'http://x' } } } },
+    ]);
     expect(JSON.stringify(items)).not.toContain('secret');
+  });
+
+  it('keeps a plugin with no installPath as a disabled source with a warning', async () => {
+    const h = fixtureHome();
+    fs.writeFileSync(
+      path.join(h.paths.claudeDir, 'plugins', 'installed_plugins.json'),
+      JSON.stringify({ version: 2, plugins: { 'broken@mk': [{ scope: 'user', version: '1' }] } }),
+    );
+    const { sources, items, warnings } = await scan(h, null);
+    expect(sources.find((x) => x.id === 'plugin:broken')?.enabled).toBe(false);
+    expect(items.filter((i) => i.sourceId === 'plugin:broken')).toEqual([]);
+    expect(warnings.some((w) => w.includes('missing on disk') && w.includes('broken@mk'))).toBe(true);
+  });
+
+  it('reads a single-file commands path and a single-file agents path', async () => {
+    const h = fixtureHome();
+    addPlugin(h, 'filey', {
+      '.claude-plugin/plugin.json': JSON.stringify({ commands: './extra/one.md', agents: ['./extra/bot.md'] }),
+      'extra/one.md': '---\ndescription: one\n---\nbody',
+      'extra/two.md': '---\ndescription: two\n---\nbody',
+      'extra/bot.md': '---\ndescription: bot\n---\nbody',
+      'extra/bot2.md': '---\ndescription: bot2\n---\nbody',
+    });
+    const { items } = await scan(h, null);
+    const mine = items.filter((i) => i.sourceId === 'plugin:filey').map((i) => i.fullName).sort();
+    expect(mine).toEqual(['filey:bot', 'filey:one']);
   });
 });

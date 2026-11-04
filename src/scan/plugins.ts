@@ -8,7 +8,7 @@ import type { ResolvedSettings } from './settings.js';
 
 type Warn = (m: string) => void;
 type Scope = 'user' | 'project' | 'local';
-type Candidate = { key: string; name: string; marketplace: string; installPath: string; scope: Scope; version: string | null };
+type Candidate = { key: string; name: string; marketplace: string; installPath: string | null; scope: Scope; version: string | null };
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const USER_INSTALLED = 'user-installed';
@@ -54,11 +54,12 @@ async function installedCandidates(p: ClaudePaths, projectDir: string | null, wa
   for (const [key, val] of Object.entries(map)) {
     const entries = Array.isArray(val) ? val : [val];
     for (const entry of entries) {
-      if (!isObj(entry) || typeof entry.installPath !== 'string') continue;
+      if (!isObj(entry)) continue;
       const scope = scopeApplies(entry, projectDir);
       if (!scope) continue;
       const { name, marketplace } = splitKey(key);
-      out.push({ key, name, marketplace, installPath: entry.installPath, scope, version: typeof entry.version === 'string' ? entry.version : null });
+      const installPath = typeof entry.installPath === 'string' && entry.installPath ? entry.installPath : null;
+      out.push({ key, name, marketplace, installPath, scope, version: typeof entry.version === 'string' ? entry.version : null });
       break; // first entry whose scope applies
     }
   }
@@ -97,6 +98,25 @@ function customPaths(root: string, v: unknown): string[] {
   return out;
 }
 
+/** A manifest path may be a directory or a single .md file; files are read via their parent dir and filtered. */
+async function readEntries(
+  paths: string[],
+  reader: (dir: string) => Promise<Item[]>,
+): Promise<Item[]> {
+  const out: Item[] = [];
+  for (const p of paths) {
+    let isFile = false;
+    try {
+      isFile = (await fs.stat(p)).isFile();
+    } catch {
+      // missing: reader yields nothing
+    }
+    if (isFile) out.push(...(await reader(path.dirname(p))).filter((i) => i.path === p));
+    else out.push(...(await reader(p)));
+  }
+  return out;
+}
+
 function uniqueById(items: Item[]): Item[] {
   const seen = new Set<string>();
   return items.filter((i) => (seen.has(i.id) ? false : (seen.add(i.id), true)));
@@ -105,13 +125,14 @@ function uniqueById(items: Item[]): Item[] {
 async function mcpFrom(root: string, manifest: Record<string, unknown>, warn: Warn): Promise<unknown[]> {
   const out: unknown[] = [];
   const inline = manifest.mcpServers;
-  if (isObj(inline)) out.push(inline);
+  const wrap = (j: unknown) => (isObj(j) && isObj(j.mcpServers) ? j : { mcpServers: j });
+  if (isObj(inline)) out.push(wrap(inline));
   else for (const f of customPaths(root, inline)) {
     const j = await readJson(f, warn);
-    if (j !== null) out.push(j);
+    if (isObj(j)) out.push(wrap(j));
   }
   const dot = await readJson(path.join(root, '.mcp.json'), warn);
-  if (dot !== null) out.push(dot);
+  if (isObj(dot)) out.push(wrap(dot));
   return out;
 }
 
@@ -135,13 +156,13 @@ export async function scanPlugins(
     const decision = s.enabledPlugins[c.key];
     const enabled = decision?.value ?? false;
     const decidedBy = decision?.decidedBy ?? null;
-    const root = path.resolve(c.installPath);
+    const root = c.installPath ? path.resolve(c.installPath) : null;
 
-    if (!(await exists(root))) {
-      warn(`Plugin ${c.key} is missing on disk: ${c.installPath}`);
+    if (!c.installPath || !root || !(await exists(root))) {
+      warn(c.installPath ? `Plugin ${c.key} is missing on disk: ${c.installPath}` : `Plugin ${c.key} is missing on disk: entry has no installPath`);
       sources.push({
         id: sourceId, kind: 'plugin', label: c.name, enabled, decidedBy,
-        plugin: { name: c.name, marketplace: c.marketplace, version: c.version ?? 'unknown', installPath: c.installPath, scope: c.scope },
+        plugin: { name: c.name, marketplace: c.marketplace, version: c.version ?? 'unknown', installPath: c.installPath ?? '', scope: c.scope },
       });
       continue;
     }
@@ -160,11 +181,11 @@ export async function scanPlugins(
     ];
     const agents = [
       ...(await readAgents(path.join(root, 'agents'), sourceId, c.name, warn)),
-      ...(await Promise.all(customPaths(root, manifest.agents).map((d) => readAgents(d, sourceId, c.name, warn)))).flat(),
+      ...(await readEntries(customPaths(root, manifest.agents), (d) => readAgents(d, sourceId, c.name, warn))),
     ];
     const commands = [
       ...(await readCommands(path.join(root, 'commands'), sourceId, c.name, warn)),
-      ...(await Promise.all(customPaths(root, manifest.commands).map((d) => readCommands(d, sourceId, c.name, warn)))).flat(),
+      ...(await readEntries(customPaths(root, manifest.commands), (d) => readCommands(d, sourceId, c.name, warn))),
     ];
 
     const resolver = pluginScriptResolver(root);
