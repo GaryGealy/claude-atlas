@@ -60,6 +60,7 @@ test('competes edge, hook tilt, and candidate ghost node', async ({ page }) => {
   await expect(panel).toContainText('injects instructions into every session');
   await expect(panel).toContainText('Template for a design and brainstorm step');
   await expect(panel).toContainText('brainstorming');
+  await expect(panel).toContainText('You MUST use this before any creative work');
 
   // Candidate folder -> ghost node
   const cand = path.join(tmp, 'research');
