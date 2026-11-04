@@ -1,5 +1,5 @@
 import { EVERY_SESSION_ID, type CompeteReason, type Edge, type Item } from '../model.js';
-import { cosine } from '../util/text.js';
+import { cosineTf, termFreq } from '../util/text.js';
 
 const PHASES: [string, string[]][] = [
   ['design', ['design', 'brainstorm', 'ideate', 'creative']],
@@ -41,7 +41,7 @@ export function findCompetes(items: Item[], threshold = 0.35): Edge[] {
     .filter((i) => PAIR_KINDS.has(i.kind))
     .map((item) => {
       const text = `${item.name} ${item.description}`;
-      return { item, text, phases: phasesOf(text) };
+      return { item, tf: termFreq(text), phases: phasesOf(text) };
     });
   const edges: Edge[] = [];
   for (let x = 0; x < cands.length; x++) {
@@ -51,7 +51,7 @@ export function findCompetes(items: Item[], threshold = 0.35): Edge[] {
       const reasons: CompeteReason[] = [];
       if (a.item.name === b.item.name) reasons.push('name-collision');
       for (const p of a.phases) if (b.phases.includes(p)) reasons.push(`phase:${p}`);
-      const sim = cosine(a.text, b.text);
+      const sim = cosineTf(a.tf, b.tf);
       if (sim >= threshold) reasons.push('similar-description');
       if (!reasons.length) continue;
       edges.push({

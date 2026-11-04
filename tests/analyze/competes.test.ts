@@ -5,7 +5,7 @@ import { scanPlugins } from '../../src/scan/plugins.js';
 import { scanLocal } from '../../src/scan/local.js';
 import { findCompetes, injectEdges, phasesOf } from '../../src/analyze/competes.js';
 import { applyTilt } from '../../src/analyze/tilt.js';
-import { EVERY_SESSION_ID } from '../../src/model.js';
+import { EVERY_SESSION_ID, type Item } from '../../src/model.js';
 
 async function ringZeroItems() {
   const { paths, projects } = fixtureHome();
@@ -64,5 +64,30 @@ describe('competes', () => {
     const edges = findCompetes([a, b]);
     applyTilt(edges, [a, b]);
     expect(edges[0].competes!.tilt.some((t) => t.kind === 'disabled' && t.itemId === a.id)).toBe(true);
+  });
+});
+
+const mk = (id: string, sourceId: string, name: string, description: string): Item => ({
+  id, kind: 'skill', name, fullName: name, sourceId, path: id, description, enabled: true, decidedBy: null,
+});
+
+describe('findCompetes reasons', () => {
+  it('flags name-collision across sources', () => {
+    const edges = findCompetes([mk('a', 's1', 'helper', 'Alpha zeta'), mk('b', 's2', 'helper', 'Omega kappa')]);
+    expect(edges).toHaveLength(1);
+    expect(edges[0].competes!.reasons).toEqual(['name-collision']);
+  });
+
+  it('flags similar-description without shared phase, and skips pairs under threshold', () => {
+    const d = 'Manage tropical fruit baskets for weekly customer deliveries';
+    const hit = findCompetes([mk('a', 's1', 'fruit', d), mk('b', 's2', 'basket', d + ' quickly')]);
+    expect(hit).toHaveLength(1);
+    expect(hit[0].competes!.reasons).toEqual(['similar-description']);
+    expect(hit[0].competes!.score).toBeGreaterThanOrEqual(0.35);
+
+    const a = mk('a', 's1', 'fruit', 'apple banana cherry date');
+    const b = mk('b', 's2', 'basket', 'apple elder fig grape');
+    expect(findCompetes([a, b])).toEqual([]);
+    expect(findCompetes([a, b], 0.19)).toHaveLength(1);
   });
 });
