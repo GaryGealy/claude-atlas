@@ -1,0 +1,6 @@
+{
+  "mcpServers": {
+    "shared": { "command": "node", "args": ["shared.js"] },
+    "unapproved": { "type": "http", "url": "https://example.com/mcp" }
+  }
+}

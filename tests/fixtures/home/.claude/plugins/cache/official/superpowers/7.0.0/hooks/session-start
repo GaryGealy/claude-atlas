@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# SessionStart hook for superpowers plugin (mirrors superpowers 7.0.0)
+set -euo pipefail
+SCRIPT_DIR="$(cd "${0%/*}" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+skill_md="${PLUGIN_ROOT}/skills/using-superpowers/SKILL.md"
+using_superpowers_content="$(<"$skill_md")"
+session_context="<EXTREMELY_IMPORTANT>\nYou have superpowers.\n\n${using_superpowers_content}\n</EXTREMELY_IMPORTANT>"
+printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"

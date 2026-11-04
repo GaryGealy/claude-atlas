@@ -1,0 +1,6 @@
+{"type":"user","sessionId":"recent-session","cwd":"__HOME__/repos/ring-zero","message":{"role":"user","content":"<command-message>design</command-message>\n<command-name>/design</command-name>"}}
+{"type":"assistant","sessionId":"recent-session","cwd":"__HOME__/repos/ring-zero","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"superpowers:brainstorming"}}]}}
+{"type":"assistant","sessionId":"recent-session","cwd":"__HOME__/repos/ring-zero","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"superpowers:brainstorming"}}]}}
+{"type":"assistant","sessionId":"recent-session","cwd":"__HOME__/repos/ring-zero","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"superpowers:brainstorming"}}]}}
+{"type":"assistant","sessionId":"recent-session","cwd":"__HOME__/repos/ring-zero","message":{"content":[{"type":"tool_use","name":"Agent","input":{"subagent_type":"Explore","prompt":"look around"}}]}}
+{"type":"assistant","sessionId":"recent-session","cwd":"__HOME__/repos/ring-zero","message":{"content":[{"type":"tool_use","name":"Task","input":{"subagent_type":"general-purpose","prompt":"legacy call"}}]}}

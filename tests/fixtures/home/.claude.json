@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "context7": { "type": "http", "url": "https://mcp.context7.com/mcp?key=SECRET123" }
+  },
+  "projects": {
+    "__HOME__/repos/ring-zero": {
+      "mcpServers": {
+        "local1": { "type": "stdio", "command": "node", "args": ["server.js"], "env": { "API_TOKEN": "SECRET456" } }
+      },
+      "enabledMcpjsonServers": ["shared"]
+    },
+    "__HOME__/repos/plain": {},
+    "__HOME__/repos/gone": {},
+    "/private/var/folders/xx/tmp-remember": {}
+  }
+}
