@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "plugins": {
+    "superpowers@official": [
+      { "scope": "user", "installPath": "__HOME__/.claude/plugins/cache/official/superpowers/7.0.0", "version": "7.0.0" }
+    ],
+    "rpi@rpi-market": [
+      { "scope": "user", "installPath": "__HOME__/.claude/plugins/cache/rpi-market/rpi/5.0.0", "version": "5.0.0" }
+    ],
+    "oldtool@official": [
+      { "scope": "user", "installPath": "__HOME__/.claude/plugins/cache/official/oldtool/1.0.0", "version": "1.0.0" }
+    ],
+    "localtool@local": [
+      { "scope": "project", "installPath": "__HOME__/.claude/plugins/cache/local/localtool/1.0.0", "version": "1.0.0", "projectPath": "__HOME__/repos/ring-zero" }
+    ]
+  }
+}

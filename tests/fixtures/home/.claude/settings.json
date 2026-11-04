@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "superpowers@official": true,
+    "rpi@rpi-market": true,
+    "oldtool@official": false
+  },
+  "skillOverrides": { "wrangler": "off" },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "echo checking bash" }] }
+    ]
+  }
+}

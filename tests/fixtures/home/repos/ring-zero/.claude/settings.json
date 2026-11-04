@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "superpowers@official": true,
+    "rpi@rpi-market": false
+  }
+}
