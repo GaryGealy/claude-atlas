@@ -56,22 +56,35 @@ export async function collectTemplates(p: ClaudePaths): Promise<Template[]> {
 
 const TRACEABLE: ItemKind[] = ['skill', 'agent', 'command'];
 
+const RENAMED_MIN_SIMILARITY = 0.85;
+
+function bestMatch(text: string, cands: Template[], min: number): { t: Template; score: number } | null {
+  let best: { t: Template; score: number } | null = null;
+  for (const t of cands) {
+    const score = t.text === text ? 1 : cosine(text, t.text);
+    if (score >= min && (!best || score > best.score)) best = { t, score };
+  }
+  return best;
+}
+
 /**
- * Returns a new array. Project skills/agents/commands matching a same-kind, same-name template
- * (cosine >= 0.6, best score wins) are replaced by copies with `tracedFrom`; all other items are the same objects.
+ * Returns a new array. Project skills/agents/commands matching a same-kind, same-name template (cosine >= 0.6, best
+ * score wins) are replaced by copies with `tracedFrom`. Failing that, a same-kind template under another name at
+ * cosine >= 0.85 traces it as `renamed`. All other items are the same objects.
  */
 export async function traceItems(items: Item[], templates: Template[]): Promise<Item[]> {
   return Promise.all(
     items.map(async (it) => {
       if (it.sourceId !== 'project' || !TRACEABLE.includes(it.kind)) return it;
-      const cands = templates.filter((t) => t.kind === it.kind && t.name === it.name);
-      if (cands.length === 0) return it;
+      const sameKind = templates.filter((t) => t.kind === it.kind);
+      if (sameKind.length === 0) return it;
       const text = await readText(it.path);
       if (text === null) return it;
-      let best: { t: Template; score: number } | null = null;
-      for (const t of cands) {
-        const score = t.text === text ? 1 : cosine(text, t.text);
-        if (score >= MIN_SIMILARITY && (!best || score > best.score)) best = { t, score };
+      let best = bestMatch(text, sameKind.filter((t) => t.name === it.name), MIN_SIMILARITY);
+      let renamed = false;
+      if (!best) {
+        best = bestMatch(text, sameKind.filter((t) => t.name !== it.name), RENAMED_MIN_SIMILARITY);
+        renamed = best !== null;
       }
       if (!best) return it;
       return {
@@ -81,6 +94,7 @@ export async function traceItems(items: Item[], templates: Template[]): Promise<
           version: best.t.version,
           similarity: Math.round(best.score * 100) / 100,
           edited: best.t.text !== text,
+          ...(renamed ? { renamed: true, template: best.t.name } : {}),
         },
       };
     }),

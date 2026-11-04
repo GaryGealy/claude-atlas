@@ -38,6 +38,12 @@ export function reasonText(r: CompeteReason, score: number): string {
   return `Both cover the ${r.slice('phase:'.length)} phase`;
 }
 
+/** "made by <plugin> setup, renamed from <template>, 92% match, edited (template version 5.0.0)" */
+export function madeByText(t: NonNullable<Item['tracedFrom']>): string {
+  const renamed = t.renamed && t.template ? `, renamed from ${t.template}` : '';
+  return `made by ${t.plugin} setup${renamed}, ${Math.round(t.similarity * 100)}% match${t.edited ? ', edited' : ''} (template version ${t.version})`;
+}
+
 export type Selection = { type: 'node'; id: string } | { type: 'edge'; id: string } | null;
 export type PanelCtx = { model: AtlasModel; select: (sel: Selection) => void };
 
@@ -99,7 +105,7 @@ function renderItem(it: Item, ctx: PanelCtx): HTMLElement[] {
   if (it.conditional) dl.append(...row('Loads', 'Only when Claude works in that folder (conditional)'));
   if (it.tracedFrom) {
     const t = it.tracedFrom;
-    dl.append(...row('Made by', `made by ${t.plugin} setup, ${Math.round(t.similarity * 100)}% match${t.edited ? ', edited' : ''} (template version ${t.version})`));
+    dl.append(...row('Made by', madeByText(t)));
   }
   const fired = firedText(it);
   if (fired) dl.append(...row('Fired', fired));

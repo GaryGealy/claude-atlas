@@ -71,6 +71,33 @@ describe('traceItems', () => {
       if (it.sourceId !== 'project') expect(out[i]).toBe(it);
     });
   });
+  it('a renamed copy of a template traces at cosine >= 0.85 with renamed and the template name', async () => {
+    const { paths, projects } = fixtureHome();
+    const src = path.join(paths.claudeDir, 'plugins/cache/rpi-market/rpi/5.0.0/skills/setup/reference/skills/design/SKILL.md');
+    const dst = path.join(projects.ringZero, '.claude/skills/architecture/SKILL.md');
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.writeFileSync(dst, fs.readFileSync(src, 'utf8').replace('name: design', 'name: architecture'));
+    const s = await resolveSettings(paths, projects.ringZero);
+    const r = await scanLocal(paths, projects.ringZero, s, () => {});
+    const out = await traceItems(r.items, await collectTemplates(paths));
+    const t = proj(out, 'architecture')?.tracedFrom as Record<string, unknown>;
+    expect(t).toMatchObject({ plugin: 'rpi', version: '5.0.0', renamed: true, template: 'design', edited: true });
+    expect(t.similarity as number).toBeGreaterThanOrEqual(0.85);
+    // Same-name matches are not marked renamed.
+    expect(proj(out, 'design')?.tracedFrom).toEqual({ plugin: 'rpi', version: '5.0.0', similarity: 1, edited: false });
+  });
+
+  it('a loosely similar skill under another name is not traced', async () => {
+    const { paths, projects } = fixtureHome();
+    const dst = path.join(projects.ringZero, '.claude/skills/sketch/SKILL.md');
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.writeFileSync(dst, '---\nname: sketch\ndescription: Sketch a design quickly on paper.\n---\n\n# Sketch\n\nDraw boxes and arrows for the feature.\n');
+    const s = await resolveSettings(paths, projects.ringZero);
+    const r = await scanLocal(paths, projects.ringZero, s, () => {});
+    const out = await traceItems(r.items, await collectTemplates(paths));
+    expect(proj(out, 'sketch')?.tracedFrom).toBeUndefined();
+  });
+
   it('does not match across kinds', async () => {
     const { templates, items } = await traced();
     const asAgent = items.map((i) => (i.sourceId === 'project' && i.name === 'design' ? { ...i, kind: 'agent' as const } : i));

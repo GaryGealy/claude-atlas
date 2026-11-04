@@ -21,7 +21,8 @@ export type Item = {
   decidedBy: string | null;
   conditional?: boolean;
   ghost?: boolean;
-  tracedFrom?: { plugin: string; version: string; similarity: number; edited: boolean };
+  /** `renamed`: matched a template with a different name (`template` is that name). */
+  tracedFrom?: { plugin: string; version: string; similarity: number; edited: boolean; renamed?: boolean; template?: string };
   hook?: { event: string; matcher: string | null; command: string; text: string /* command + resolved script, ≤4 KB */; mentionsSkills: boolean };
   mcp?: {
     transport: 'stdio' | 'http' | 'sse' | 'unknown';

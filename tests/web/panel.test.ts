@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Item, Tilt } from '../../src/model.js';
-import { reasonText, tiltText } from '../../web/panel.js';
+import { madeByText, reasonText, tiltText } from '../../web/panel.js';
 
 const it1 = { id: 'a', name: 'brainstorming', fullName: 'superpowers:brainstorming', kind: 'skill' } as Item;
 const lookup = (id: string): Item | undefined => (id === 'a' ? it1 : undefined);
@@ -22,5 +22,12 @@ describe('plain-words tilt and reasons', () => {
     expect(reasonText('phase:design', 0)).toMatch(/design phase/);
     expect(reasonText('name-collision', 0)).toMatch(/same short name/i);
     expect(reasonText('similar-description', 0.42)).toMatch(/42%/);
+  });
+
+  it('made-by text names the template when the copy was renamed', () => {
+    expect(madeByText({ plugin: 'rpi', version: '5.0.0', similarity: 0.93, edited: true, renamed: true, template: 'design' })).toBe(
+      'made by rpi setup, renamed from design, 93% match, edited (template version 5.0.0)',
+    );
+    expect(madeByText({ plugin: 'rpi', version: '5.0.0', similarity: 1, edited: false })).toBe('made by rpi setup, 100% match (template version 5.0.0)');
   });
 });
