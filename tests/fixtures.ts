@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathsFor, type ClaudePaths } from '../src/paths.js';
+import { encodeProjectDir } from '../src/scan/projects.js';
 
 const FIXTURE_HOME = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'home');
 const HOME_TOKEN = '__HOME__';
@@ -13,10 +14,6 @@ const created: string[] = [];
 process.on('exit', () => {
   for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });
 });
-
-export function encodeProjectDir(p: string): string {
-  return p.replace(/[^A-Za-z0-9]/g, '-');
-}
 
 function rewriteTokens(dir: string, home: string): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
