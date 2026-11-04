@@ -5,7 +5,11 @@ import type { Item } from '../model.js';
 import { readText } from '../util/fs.js';
 import { encodeProjectDir } from './projects.js';
 
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist']);
+// Dot-directories are skipped too. The walk is bounded in depth and in entries visited.
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'Library', 'build', 'target', '.venv', 'venv', 'vendor']);
+export const NESTED_MAX_DEPTH = 6;
+export const NESTED_MAX_ENTRIES = 20_000;
+export type NestedLimits = { depth: number; entries: number };
 
 async function isFile(p: string): Promise<boolean> {
   try {
@@ -42,9 +46,14 @@ export function findImports(text: string): string[] {
   return out;
 }
 
-async function nestedClaudeFiles(root: string): Promise<string[]> {
+/** CLAUDE.md files in subdirectories (loaded only when Claude works there). Never walks home or `/`. */
+async function nestedClaudeFiles(root: string, home: string, warn: (m: string) => void, limits: NestedLimits): Promise<string[]> {
+  if (root === path.resolve(home) || path.dirname(root) === root) return [];
   const found: string[] = [];
-  async function rec(dir: string): Promise<void> {
+  let visited = 0;
+  let capped = false;
+  async function rec(dir: string, depth: number): Promise<void> {
+    if (capped) return;
     let entries;
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
@@ -53,15 +62,26 @@ async function nestedClaudeFiles(root: string): Promise<string[]> {
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const e of entries) {
-      if (e.isDirectory() && !SKIP_DIRS.has(e.name)) await rec(path.join(dir, e.name));
-      else if (e.isFile() && e.name === 'CLAUDE.md' && dir !== root) found.push(path.join(dir, e.name));
+      if (++visited > limits.entries) {
+        capped = true;
+        warn(`Stopped looking for nested CLAUDE.md files after ${limits.entries} entries under ${root}; some may be missing.`);
+        return;
+      }
+      if (e.isDirectory()) {
+        if (depth < limits.depth && !e.name.startsWith('.') && !SKIP_DIRS.has(e.name)) await rec(path.join(dir, e.name), depth + 1);
+      } else if (e.isFile() && e.name === 'CLAUDE.md' && dir !== root) found.push(path.join(dir, e.name));
     }
   }
-  await rec(root);
+  await rec(root, 0);
   return found;
 }
 
-export async function scanInstructions(p: ClaudePaths, projectDir: string): Promise<Item[]> {
+export async function scanInstructions(
+  p: ClaudePaths,
+  projectDir: string,
+  warn: (m: string) => void = () => {},
+  limits: NestedLimits = { depth: NESTED_MAX_DEPTH, entries: NESTED_MAX_ENTRIES },
+): Promise<Item[]> {
   const items: Item[] = [];
   const visited = new Set<string>();
 
@@ -108,7 +128,7 @@ export async function scanInstructions(p: ClaudePaths, projectDir: string): Prom
   } catch {
     // no rules dir
   }
-  for (const f of await nestedClaudeFiles(project)) await add(f, 'project', project, true);
+  for (const f of await nestedClaudeFiles(project, p.home, warn, limits)) await add(f, 'project', project, true);
 
   const memDir = path.join(p.claudeDir, 'projects', encodeProjectDir(project), 'memory');
   const memIndex = path.join(memDir, 'MEMORY.md');

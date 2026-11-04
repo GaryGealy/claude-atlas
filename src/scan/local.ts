@@ -86,7 +86,9 @@ export async function scanLocal(p: ClaudePaths, projectDir: string, s: ResolvedS
 
   sources.push(source('project', 'project', path.basename(projectDir)));
   const claude = path.join(projectDir, '.claude');
-  items.push(...(await dirItems(claude, 'project', null, s, warn)));
+  // When the project is the home dir, <project>/.claude is ~/.claude: those files are already the user's.
+  const userPaths = new Set(items.map((i) => i.path));
+  items.push(...(await dirItems(claude, 'project', null, s, warn)).filter((i) => !userPaths.has(i.path)));
   items.push(...(await hookItems(s, 'project', scriptResolver(p, projectDir, projectDir))));
 
   return { sources, items };

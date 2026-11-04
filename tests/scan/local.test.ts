@@ -85,6 +85,14 @@ describe('scanLocal', () => {
     expect(r.items.filter((i) => i.kind === 'hook' && i.sourceId === 'user').map((i) => i.id)).toEqual(['hook:user:Stop:0', 'hook:user:Stop:1']);
   });
 
+  it('home dir as project: user skills and settings hooks are not counted again as project ones', async () => {
+    const { paths } = await run('ringZero');
+    const r = await scanLocal(paths, paths.home, await resolveSettings(paths, paths.home), () => {});
+    expect(r.items.filter((i) => i.sourceId === 'project')).toEqual([]);
+    expect(r.items.filter((i) => i.sourceId === 'user' && i.kind === 'hook')).toHaveLength(1);
+    expect(r.items.filter((i) => i.name === 'my-notes').map((i) => i.sourceId)).toEqual(['user']);
+  });
+
   it('plain project: project source exists with no items, nothing throws', async () => {
     const { r } = await run('plain');
     expect(r.sources.some((s) => s.id === 'project' && s.label === 'plain')).toBe(true);

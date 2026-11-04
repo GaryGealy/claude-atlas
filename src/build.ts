@@ -35,7 +35,7 @@ export async function buildModel(p: ClaudePaths, projectDir: string, opts: Build
   warnings.push(...settings.warnings);
   const plugins = await scanPlugins(p, projectDir, settings, warn);
   const local = await scanLocal(p, projectDir, settings, warn);
-  const instructions = await scanInstructions(p, projectDir);
+  const instructions = await scanInstructions(p, projectDir, warn);
   const mcp = await scanMcp(p, projectDir, plugins.pluginMcp);
 
   const sources: Source[] = [];

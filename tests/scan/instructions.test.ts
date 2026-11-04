@@ -72,6 +72,32 @@ describe('scanInstructions', () => {
       expect(items.filter((i) => i.fullName === path.join(proj, 'CLAUDE.md')).length).toBe(1);
     });
 
+    it('skips the nested walk entirely when the project is the home dir', async () => {
+      const { home, p } = setup();
+      w(path.join(home, 'work', 'CLAUDE.md'), '# deep');
+      const items = await scanInstructions(p, home);
+      expect(items.some((i) => i.conditional)).toBe(false);
+    });
+
+    it('skips dot-dirs and build/vendor dirs, stops at depth 6', async () => {
+      const { proj, p } = setup();
+      for (const d of ['.hidden', 'Library', 'build', 'target', '.venv', 'venv', 'vendor', 'dist', '.git']) w(path.join(proj, d, 'CLAUDE.md'), '# skip');
+      w(path.join(proj, 'a/b/c/d/e/f/CLAUDE.md'), '# depth 6');
+      w(path.join(proj, 'a/b/c/d/e/f/g/CLAUDE.md'), '# depth 7');
+      const names = (await scanInstructions(p, proj)).filter((i) => i.conditional).map((i) => i.name);
+      expect(names).toEqual([path.join('a/b/c/d/e/f', 'CLAUDE.md')]);
+    });
+
+    it('caps entries visited and warns', async () => {
+      const { proj, p } = setup();
+      for (let i = 0; i < 30; i++) w(path.join(proj, `d${String(i).padStart(2, '0')}`, 'x.txt'), 'x');
+      w(path.join(proj, 'zz', 'CLAUDE.md'), '# late');
+      const warnings: string[] = [];
+      const items = await scanInstructions(p, proj, (m) => warnings.push(m), { depth: 6, entries: 20 });
+      expect(items.some((i) => i.conditional)).toBe(false);
+      expect(warnings).toEqual([expect.stringContaining('Stopped looking for nested CLAUDE.md files after 20 entries')]);
+    });
+
     it('skips node_modules for nested CLAUDE.md and caps description at 200 chars', async () => {
       const { proj, p } = setup();
       w(path.join(proj, 'CLAUDE.md'), '# P\n\n' + 'x'.repeat(300));

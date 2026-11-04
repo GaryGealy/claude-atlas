@@ -28,7 +28,12 @@ export async function resolveSettings(p: ClaudePaths, projectDir: string | null)
   layers.push({ file: path.join(p.managedDir, 'managed-settings.json'), sourceId: 'managed' });
 
   const out: ResolvedSettings = { enabledPlugins: {}, skillOverrides: {}, hooks: [], warnings: [] };
+  const seen = new Set<string>();
   for (const { file, sourceId } of layers) {
+    // When the project is the home dir its .claude/settings.json is the user file: read it once, as the user's.
+    const abs = path.resolve(file);
+    if (seen.has(abs)) continue;
+    seen.add(abs);
     const text = await readText(file);
     if (text === null) continue;
     let json: unknown;
