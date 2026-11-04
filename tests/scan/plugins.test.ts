@@ -67,7 +67,6 @@ describe('scanPlugins', () => {
 
   it('turns off a skill via skillOverrides, decided by the user settings file', async () => {
     const h = fixtureHome();
-    h.paths.claudeDir; // user-installed plugin enabled via user settings
     const settingsFile = path.join(h.paths.claudeDir, 'settings.json');
     const j = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
     j.enabledPlugins['tools@user-installed'] = true;
