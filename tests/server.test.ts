@@ -6,6 +6,8 @@ import path from 'node:path';
 import { startServer } from '../src/server.js';
 import { fixtureHome } from './fixtures.js';
 import type { AtlasModel } from '../src/model.js';
+import type { JudgeSummary } from '../src/analyze/judge.js';
+import { judgeTargets } from '../src/analyze/strength.js';
 
 type Started = Awaited<ReturnType<typeof startServer>>;
 const closers: (() => Promise<void>)[] = [];
@@ -26,6 +28,7 @@ function rawGet(port: number, p: string, headers: http.OutgoingHttpHeaders): Pro
   });
 }
 
+const HELP = '--bare --tools --setting-sources --strict-mcp-config --no-session-persistence';
 const MCP_OUT = 'ctx7: https://example.com/mcp?key=SECRET (HTTP) - ✓ Connected\nclaude.ai Gmail: https://gmail.example/mcp - ✗ Failed to connect\n';
 
 async function boot(runners: Parameters<typeof startServer>[0]['runners'] = {}) {
@@ -187,11 +190,61 @@ describe('server', () => {
     expect(await rawGet(port, p, { Host: `127.0.0.1:${port + 1}` })).toBe(403);
   });
 
+  it('judge success path: default-view pairs only, verdicts persisted, summary returned, --tools "" passed', async () => {
+    const calls: string[][] = [];
+    let n = 0;
+    const claude = async (a: string[]) => {
+      calls.push(a);
+      if (a.includes('--help')) return HELP;
+      n++;
+      return JSON.stringify({ session_id: `sid-${n}`, result: '{"same": true, "why": "both plan"}' });
+    };
+    const { fx, api } = await boot({ claude, env: { ANTHROPIC_API_KEY: 'x' } });
+    const url = `/api/judge?project=${encodeURIComponent(fx.projects.ringZero)}`;
+    const before = (await (await api(`/api/model?project=${encodeURIComponent(fx.projects.ringZero)}`)).json()) as AtlasModel;
+    const targets = judgeTargets(before.edges, before.items).map((e) => e.id).sort();
+    expect(targets.length).toBeGreaterThan(0);
+    const res = await api(url, { method: 'POST' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { model: AtlasModel; judge: JudgeSummary };
+    expect(body.judge).toEqual({ candidates: targets.length, judged: targets.length, cached: 0, failed: 0, firstError: null });
+    expect(body.model.edges.filter((e) => e.competes?.judge).map((e) => e.id).sort()).toEqual(targets);
+    const runs = calls.filter((c) => !c.includes('--help'));
+    expect(runs).toHaveLength(targets.length);
+    for (const r of runs) {
+      const i = r.indexOf('--tools');
+      expect(r[i + 1]).toBe('');
+      expect(r[i + 2]).toMatch(/^--/);
+    }
+    const cacheDir = fx.paths.cacheDir;
+    expect(Object.keys(JSON.parse(fs.readFileSync(path.join(cacheDir, 'judge.json'), 'utf8')))).toHaveLength(targets.length);
+    expect(JSON.parse(fs.readFileSync(path.join(cacheDir, 'judge-sessions.json'), 'utf8'))).toHaveLength(targets.length);
+    // Running again reuses the cached verdicts without running claude.
+    const again = (await (await api(url, { method: 'POST' })).json()) as { judge: JudgeSummary };
+    expect(again.judge).toMatchObject({ judged: targets.length, cached: targets.length, failed: 0 });
+    expect(calls.filter((c) => !c.includes('--help'))).toHaveLength(targets.length);
+  });
+
+  it('judge failures are reported, not swallowed', async () => {
+    const claude = async (a: string[]) => {
+      if (a.includes('--help')) return HELP;
+      throw Object.assign(new Error(`Command failed: claude at ${os.homedir()}/x`), { stderr: `Credit balance is too low in ${os.homedir()}/y` });
+    };
+    const { fx, api } = await boot({ claude, env: { ANTHROPIC_API_KEY: 'x' } });
+    const res = await api(`/api/judge?project=${encodeURIComponent(fx.projects.ringZero)}`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { judge: JudgeSummary };
+    expect(body.judge.judged).toBe(0);
+    expect(body.judge.failed).toBe(body.judge.candidates);
+    expect(body.judge.firstError).toContain('Credit balance is too low');
+    expect(body.judge.firstError).not.toContain(os.homedir());
+  });
+
   it('concurrent /api/judge requests share one run and both get verdicts', async () => {
     const calls: string[][] = [];
     const claude = async (a: string[]) => {
       calls.push(a);
-      if (a.includes('--help')) return '--bare --setting-sources --strict-mcp-config --no-session-persistence';
+      if (a.includes('--help')) return HELP;
       await new Promise((r) => setTimeout(r, 30));
       return JSON.stringify({ same: true, why: 'fake' });
     };
@@ -199,8 +252,8 @@ describe('server', () => {
     const url = `/api/judge?project=${encodeURIComponent(fx.projects.ringZero)}`;
     const [a, b] = await Promise.all([api(url, { method: 'POST' }), api(url, { method: 'POST' })]);
     expect(a.status).toBe(200);
-    const ma = (await a.json()) as AtlasModel;
-    const mb = (await b.json()) as AtlasModel;
+    const ma = ((await a.json()) as { model: AtlasModel }).model;
+    const mb = ((await b.json()) as { model: AtlasModel }).model;
     const judged = (m: AtlasModel) => m.edges.filter((e) => e.competes?.judge?.same === true).length;
     expect(judged(ma)).toBeGreaterThan(0);
     expect(judged(mb)).toBe(judged(ma));
@@ -209,6 +262,17 @@ describe('server', () => {
     expect(runs.length).toBeLessThanOrEqual(judged(ma));
     const m3 = (await (await api(`/api/model?project=${encodeURIComponent(fx.projects.ringZero)}`)).json()) as AtlasModel;
     expect(judged(m3)).toBe(judged(ma));
+  });
+
+  it('mcp-live: a missing claude binary or a timeout is a readable 502', async () => {
+    const enoent = await boot({ mcpList: async () => { throw Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }); } });
+    const r1 = await enoent.api(`/api/mcp-live?project=${encodeURIComponent(enoent.fx.projects.ringZero)}`, { method: 'POST' });
+    expect(r1.status).toBe(502);
+    expect((await r1.json()).error).toMatch(/not found on PATH/);
+    const slow = await boot({ mcpList: async () => { throw Object.assign(new Error('Command failed'), { killed: true, signal: 'SIGTERM' }); } });
+    const r2 = await slow.api(`/api/mcp-live?project=${encodeURIComponent(slow.fx.projects.ringZero)}`, { method: 'POST' });
+    expect(r2.status).toBe(502);
+    expect((await r2.json()).error).toMatch(/timed out/);
   });
 
   it('body limit, bad JSON, routes, methods', async () => {

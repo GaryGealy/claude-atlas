@@ -8,7 +8,7 @@ import type { AtlasModel, Item } from './model.js';
 import { buildModel } from './build.js';
 import { listProjects } from './scan/projects.js';
 import { execClaudeMcpList, liveMcpStatus } from './scan/mcp.js';
-import { judgePairs, probeJudge, runClaude, type JudgeCapability, type JudgeRun } from './analyze/judge.js';
+import { judgePairs, probeJudge, runClaude, type JudgeCapability, type JudgeRun, type JudgeSummary } from './analyze/judge.js';
 import { loadCandidate, runGit, type CandidateInput, type GitRunner } from './candidate.js';
 
 export type ServerOpts = {
@@ -155,7 +155,7 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
   };
 
   const building = new Map<string, Promise<AtlasModel>>();
-  const judging = new Map<string, Promise<AtlasModel>>();
+  const judging = new Map<string, Promise<{ model: AtlasModel; judge: JudgeSummary }>>();
   const once = <T,>(map: Map<string, Promise<T>>, key: string, fn: () => Promise<T>): Promise<T> => {
     let pr = map.get(key);
     if (!pr) {
@@ -197,7 +197,16 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
         need('POST');
         const dir = await requireDir(project);
         const base = await cached(dir);
-        const m = applyLive(base, await liveMcpStatus(dir, mcpList));
+        let entries: Awaited<ReturnType<typeof liveMcpStatus>>;
+        try {
+          entries = await liveMcpStatus(dir, mcpList);
+        } catch (e) {
+          const x = e as { code?: unknown; killed?: boolean; signal?: unknown };
+          if (x?.code === 'ENOENT') throw new HttpError(502, 'Could not run `claude mcp list`: the claude CLI was not found on PATH.');
+          if (x?.killed || x?.signal === 'SIGTERM') throw new HttpError(502, '`claude mcp list` timed out (30 s). Some MCP servers may be slow to start.');
+          throw e;
+        }
+        const m = applyLive(base, entries);
         cache.set(dir, m);
         return send(res, 200, m);
       }
@@ -225,14 +234,15 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
         capability ??= probeJudge(claude, env);
         const cap = await capability;
         if (!cap.available) throw new HttpError(409, 'Judge unavailable', cap);
-        const judged = await once(judging, dir, async () => {
+        const result = await once(judging, dir, async () => {
           const base = await cached(dir);
           const work = structuredClone(base);
-          await judgePairs(work.edges, work.items, paths, cap, claude);
+          const summary = await judgePairs(work.edges, work.items, paths, cap, claude);
+          if (summary.firstError) summary.firstError = scrub(summary.firstError, paths);
           if (cache.get(dir) === base) cache.set(dir, work);
-          return work;
+          return { model: work, judge: summary };
         });
-        return send(res, 200, judged);
+        return send(res, 200, result);
       }
       default:
         throw new HttpError(404, 'Not found');

@@ -1,12 +1,12 @@
 // App wiring: toolbar actions, model loading, filters -> map -> panel.
 import type { AtlasModel } from '../src/model.js';
-import { api, ApiError, token, type CandidateInput, type JudgeCapability, type ProjectEntry } from './api.js';
+import { api, ApiError, token, type CandidateInput, type JudgeCapability, type JudgeSummary, type ProjectEntry } from './api.js';
 import { defaultFilters, toElements, type Filters } from './graph.js';
 import { renderFilters } from './filters.js';
 import { createMap } from './map.js';
 import { h, renderPanel, renderWarnings, type Selection } from './panel.js';
 import { OTHER, pickerOptions, switchProject } from './project.js';
-import { defaultCompetes } from '../src/analyze/strength.js';
+import { defaultCompetes, JUDGE_CAP, judgeTargets } from '../src/analyze/strength.js';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -72,7 +72,7 @@ function setBusy(busy: boolean, label = ''): void {
 function updateJudgeButton(): void {
   const cap = state.capability;
   ui.judge.disabled = state.busy || !state.project || !cap?.available;
-  ui.judge.title = cap && !cap.available ? (cap.reason ?? 'Unavailable') : 'Asks your claude CLI, run in isolation (no hooks, plugins or MCP), whether each competing pair would be chosen for the same request.';
+  ui.judge.title = cap && !cap.available ? (cap.reason ?? 'Unavailable') : `Asks your claude CLI, run in isolation (no hooks, plugins, MCP or tools), whether the strongest competing pairs (at most ${JUDGE_CAP}) would be chosen for the same request.`;
 }
 
 function statusLine(m: AtlasModel): string {
@@ -202,7 +202,31 @@ ui.pathForm.addEventListener('submit', (ev) => {
 $('fit').addEventListener('click', () => map.fitAll());
 ui.rescan.addEventListener('click', () => void run('Rescanning…', () => api.rescan(state.project!)));
 ui.mcp.addEventListener('click', () => void run('Checking live MCP status (starting servers)…', () => api.mcpLive(state.project!)));
-ui.judge.addEventListener('click', () => void run('Asking Claude to judge…', () => api.judge(state.project!)));
+ui.judge.addEventListener('click', () => {
+  if (!state.model || !state.project) return;
+  const n = judgeTargets(state.model.edges, state.model.items).length;
+  if (n === 0) {
+    showError('Nothing to judge: no strong competing pairs between enabled items.');
+    return;
+  }
+  const ok = confirm(
+    `Ask Claude to judge ${n} competing pair${n === 1 ? '' : 's'}?\n\nOnly the strongest pairs between enabled items (at most ${JUDGE_CAP}) are sent. ` +
+      `Each uncached pair runs one isolated claude -p call using your API key; cached verdicts are reused.`,
+  );
+  if (!ok) return;
+  let summary: JudgeSummary | null = null;
+  void run('Asking Claude to judge…', async () => {
+    const r = await api.judge(state.project!);
+    summary = r.judge;
+    return r.model;
+  }).then((done) => {
+    const s = summary as JudgeSummary | null;
+    if (!done || !s) return;
+    const line = `Judged ${s.judged} of ${s.candidates} pair${s.candidates === 1 ? '' : 's'}${s.cached ? ` (${s.cached} cached)` : ''}`;
+    if (s.failed) showError(`${line}; ${s.failed} failed: ${s.firstError ?? 'unknown error'}`);
+    else ui.status.textContent = `${line} · ${ui.status.textContent}`;
+  });
+});
 
 // Candidate dialog.
 const kindSections = Array.from(ui.cform.querySelectorAll<HTMLElement>('[data-kind]'));

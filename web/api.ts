@@ -2,10 +2,10 @@
 import type { AtlasModel } from '../src/model.js';
 // Type-only imports: erased at build time, so no node code reaches the bundle.
 import type { ProjectEntry } from '../src/scan/projects.js';
-import type { JudgeCapability } from '../src/analyze/judge.js';
+import type { JudgeCapability, JudgeSummary } from '../src/analyze/judge.js';
 import type { CandidateInput } from '../src/candidate.js';
 
-export type { CandidateInput, JudgeCapability, ProjectEntry };
+export type { CandidateInput, JudgeCapability, JudgeSummary, ProjectEntry };
 
 export class ApiError extends Error {
   constructor(
@@ -50,5 +50,5 @@ export const api = {
   mcpLive: (project: string) => call<AtlasModel>('POST', `/api/mcp-live?${q(project)}`),
   candidate: (project: string, input: CandidateInput) => call<AtlasModel>('POST', '/api/candidate', { project, input }),
   judgeCapability: () => call<JudgeCapability>('GET', '/api/judge/capability'),
-  judge: (project: string) => call<AtlasModel>('POST', `/api/judge?${q(project)}`),
+  judge: (project: string) => call<{ model: AtlasModel; judge: JudgeSummary }>('POST', `/api/judge?${q(project)}`),
 };
