@@ -20,7 +20,7 @@ export type ServerOpts = {
 export type RunningServer = { url: string; token: string; address: AddressInfo; close(): Promise<void> };
 
 const MAX_BODY = 1024 * 1024;
-const CSP = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'";
+const CSP = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -65,6 +65,15 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
   } catch {
     throw new HttpError(400, 'Invalid JSON body');
   }
+}
+
+/** Replaces absolute paths in an error message (and the home/cache dirs) with basenames. */
+function scrub(msg: string, paths: ClaudePaths): string {
+  let out = msg;
+  for (const d of [paths.cacheDir, paths.home]) if (d.length > 1) out = out.split(d).join('<dir>');
+  return out
+    .replace(/(?:[A-Za-z]:)?[\\/](?:[^\s:;,)'"<>\\/]+[\\/])+([^\s:;,)'"<>\\/]*)/g, '$1')
+    .slice(0, 300);
 }
 
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
@@ -145,14 +154,23 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
     res.end(text);
   };
 
-  const cached = async (dir: string): Promise<AtlasModel> => {
-    let m = cache.get(dir);
-    if (!m) {
-      m = await buildModel(paths, dir);
-      cache.set(dir, m);
+  const building = new Map<string, Promise<AtlasModel>>();
+  const judging = new Map<string, Promise<AtlasModel>>();
+  const once = <T,>(map: Map<string, Promise<T>>, key: string, fn: () => Promise<T>): Promise<T> => {
+    let pr = map.get(key);
+    if (!pr) {
+      pr = fn().finally(() => map.delete(key));
+      map.set(key, pr);
     }
-    return m;
+    return pr;
   };
+  const rebuild = (dir: string): Promise<AtlasModel> =>
+    once(building, dir, async () => {
+      const m = await buildModel(paths, dir);
+      cache.set(dir, m);
+      return m;
+    });
+  const cached = async (dir: string): Promise<AtlasModel> => cache.get(dir) ?? rebuild(dir);
 
   async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     const route = url.pathname;
@@ -173,9 +191,7 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
       case '/api/rescan': {
         need('POST');
         const dir = await requireDir(project);
-        const m = await buildModel(paths, dir);
-        cache.set(dir, m);
-        return send(res, 200, m);
+        return send(res, 200, await rebuild(dir));
       }
       case '/api/mcp-live': {
         need('POST');
@@ -191,7 +207,12 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
         const input = parseCandidateInput(body?.input);
         if (!body || !isStr(body.project)) throw new HttpError(400, 'Missing project');
         const dir = await requireDir(body.project);
-        const candidate = await loadCandidate(input, paths, git);
+        let candidate: Awaited<ReturnType<typeof loadCandidate>>;
+        try {
+          candidate = await loadCandidate(input, paths, git);
+        } catch (e) {
+          throw new HttpError(422, scrub(e instanceof Error ? e.message : String(e), paths));
+        }
         return send(res, 200, await buildModel(paths, dir, { candidate }));
       }
       case '/api/judge/capability':
@@ -204,9 +225,14 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
         capability ??= probeJudge(claude, env);
         const cap = await capability;
         if (!cap.available) throw new HttpError(409, 'Judge unavailable', cap);
-        const m = await cached(dir);
-        await judgePairs(m.edges, m.items, paths, cap, claude);
-        return send(res, 200, m);
+        const judged = await once(judging, dir, async () => {
+          const base = await cached(dir);
+          const work = structuredClone(base);
+          await judgePairs(work.edges, work.items, paths, cap, claude);
+          if (cache.get(dir) === base) cache.set(dir, work);
+          return work;
+        });
+        return send(res, 200, judged);
       }
       default:
         throw new HttpError(404, 'Not found');
@@ -258,7 +284,10 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
       } catch (err) {
         if (res.headersSent) return res.end();
         if (err instanceof HttpError) send(res, err.status, err.body ?? { error: err.message });
-        else send(res, 500, { error: err instanceof Error ? err.message : String(err) });
+        else {
+          console.error(`[claude-atlas] ${err instanceof Error ? err.message : String(err)}`);
+          send(res, 500, { error: 'Internal error' });
+        }
       }
     })();
   });
