@@ -6,6 +6,7 @@ import { renderFilters } from './filters.js';
 import { createMap } from './map.js';
 import { h, renderPanel, renderWarnings, type Selection } from './panel.js';
 import { OTHER, pickerOptions, switchProject } from './project.js';
+import { defaultCompetes } from '../src/analyze/strength.js';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -75,14 +76,10 @@ function updateJudgeButton(): void {
 }
 
 function statusLine(m: AtlasModel): string {
-  const competes = m.edges.filter((e) => e.kind === 'competes');
-  const live = competes.filter((e) => {
-    const a = m.items.find((i) => i.id === e.from);
-    const b = m.items.find((i) => i.id === e.to);
-    return a?.enabled && b?.enabled;
-  }).length;
+  const competes = m.edges.filter((e) => e.kind === 'competes').length;
+  const shown = defaultCompetes(m.edges, m.items).size;
   const injects = m.edges.filter((e) => e.kind === 'injects').length;
-  return `${m.items.length} items · ${competes.length} competes (${live} between enabled items) · ${injects} every-session hook${injects === 1 ? '' : 's'} · scanned ${new Date(m.scannedAt).toLocaleTimeString()}`;
+  return `${m.items.length} items · ${competes} competes (${shown} strongest shown by default) · ${injects} every-session hook${injects === 1 ? '' : 's'} · scanned ${new Date(m.scannedAt).toLocaleTimeString()}`;
 }
 
 function drawMap(refit: boolean): void {
@@ -101,6 +98,7 @@ function setModel(m: AtlasModel): void {
     f.kinds = new Set(prevF.kinds);
     f.showDisabled = prevF.showDisabled;
     f.search = prevF.search;
+    f.allCompetes = prevF.allCompetes;
     f.sources = new Set(m.sources.map((s) => s.id).filter((id) => prevF.sources.has(id) || !prevIds.has(id)));
   }
   state.filters = f;

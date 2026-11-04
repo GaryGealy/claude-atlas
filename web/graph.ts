@@ -1,8 +1,10 @@
 // Pure model -> Cytoscape element mapping and preset layout. No DOM access here (unit-tested under node).
 import type { ElementDefinition } from 'cytoscape';
 import { EVERY_SESSION_ID, type AtlasModel, type Item, type ItemKind, type SourceKind } from '../src/model.js';
+import { defaultCompetes } from '../src/analyze/strength.js';
 
-export type Filters = { kinds: Set<ItemKind>; sources: Set<string>; showDisabled: boolean; search: string };
+/** `allCompetes` off (the default) shows only the strongest competes between enabled items; on shows every one. */
+export type Filters = { kinds: Set<ItemKind>; sources: Set<string>; showDisabled: boolean; search: string; allCompetes: boolean };
 
 export const ALL_KINDS: readonly ItemKind[] = ['skill', 'agent', 'command', 'hook', 'mcp-server', 'instruction', 'memory'];
 export const KIND_LABELS: Record<ItemKind, string> = {
@@ -16,7 +18,7 @@ export const KIND_LABELS: Record<ItemKind, string> = {
 };
 
 export function defaultFilters(m: AtlasModel): Filters {
-  return { kinds: new Set(ALL_KINDS), sources: new Set(m.sources.map((s) => s.id)), showDisabled: true, search: '' };
+  return { kinds: new Set(ALL_KINDS), sources: new Set(m.sources.map((s) => s.id)), showDisabled: true, search: '', allCompetes: false };
 }
 
 const KIND_COLORS: Record<SourceKind, string> = {
@@ -114,10 +116,12 @@ export function toElements(m: AtlasModel, f: Filters): ElementDefinition[] {
     .filter((s) => f.sources.has(s.id) && (bySource.has(s.id) || ((itemCount.get(s.id) ?? 0) === 0 && (f.showDisabled || s.enabled))))
     .sort((a, b) => Number(b.kind === 'candidate') - Number(a.kind === 'candidate'));
 
-  // Edges that survive filtering.
+  // Edges that survive filtering. By default only the strongest competes between enabled items are drawn.
   const present = new Set<string>([...sources.map((s) => s.id), ...visibleItemIds]);
+  const shownCompetes = f.allCompetes ? null : defaultCompetes(m.edges, m.items);
   const edges = m.edges.filter((e) => {
     if (e.kind === 'injects') return visibleItemIds.has(e.from) && e.to === EVERY_SESSION_ID;
+    if (e.kind === 'competes' && shownCompetes && !shownCompetes.has(e.id)) return false;
     return present.has(e.from) && present.has(e.to);
   });
   const hasSession = edges.some((e) => e.kind === 'injects');

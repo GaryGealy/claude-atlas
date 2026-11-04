@@ -84,10 +84,25 @@ describe('toElements', () => {
     expect(els.some((e) => cls(e).includes('provides') && e.data.source === 'project' && e.data.target === design().id)).toBe(true);
   });
 
-  it('draws competes edges touching a disabled item faint (weak) and enabled pairs at full strength', () => {
+  it('default view: incident pairs between enabled items show; edges touching a disabled item are hidden', () => {
     const els = toElements(m, filters());
+    const createPlan = item((i) => i.name === 'create-plan' && i.sourceId === 'project');
+    const wp = item((i) => i.fullName === 'superpowers:writing-plans');
+    expect(cls(competesBetween(els, brain().id, design().id))).not.toContain('weak');
+    expect(competesBetween(els, wp.id, createPlan.id)).toBeTruthy();
+    const bd = m.edges.find((e) => e.id === competesBetween(els, brain().id, design().id)!.data.id)!;
+    expect(bd.competes!.tilt.some((t) => t.kind === 'hook-injects' && t.itemId === brain().id)).toBe(true);
+    expect(competesBetween(els, setup().id, design().id)).toBeUndefined();
+    expect(els.filter((e) => cls(e).includes('competes')).every((e) => !cls(e).includes('weak'))).toBe(true);
+    // Fewer competes drawn than exist in the model.
+    expect(els.filter((e) => cls(e).includes('competes')).length).toBeLessThan(m.edges.filter((e) => e.kind === 'competes').length);
+  });
+
+  it('Show all competes draws every pair, edges touching a disabled item faint (weak)', () => {
+    const els = toElements(m, filters({ allCompetes: true }));
     expect(cls(competesBetween(els, setup().id, design().id) ?? competesBetween(els, setup().id, item((i) => i.name === 'create-plan' && i.sourceId === 'project').id))).toContain('weak');
     expect(cls(competesBetween(els, brain().id, design().id))).not.toContain('weak');
+    expect(els.filter((e) => cls(e).includes('competes')).length).toBe(m.edges.filter((e) => e.kind === 'competes').length);
   });
 
   it('with showDisabled false drops disabled items, disabled sources and their edges', () => {
@@ -152,5 +167,6 @@ describe('toElements', () => {
     expect(f.sources.size).toBe(m.sources.length);
     expect(f.showDisabled).toBe(true);
     expect(f.search).toBe('');
+    expect(f.allCompetes).toBe(false);
   });
 });

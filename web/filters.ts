@@ -1,4 +1,4 @@
-// Filter controls: kinds, sources, "show disabled" and search. Calls onChange with a fresh Filters object.
+// Filter controls: kinds, sources, "show disabled", "show all competes" and search. Calls onChange with a fresh Filters object.
 import type { AtlasModel } from '../src/model.js';
 import { ALL_KINDS, KIND_LABELS, sourceColors, type Filters } from './graph.js';
 import { h } from './panel.js';
@@ -6,8 +6,8 @@ import { h } from './panel.js';
 export type FilterChange = { filters: Filters; relayout: boolean };
 
 export function renderFilters(container: HTMLElement, m: AtlasModel, current: Filters, onChange: (c: FilterChange) => void): void {
-  const f: Filters = { kinds: new Set(current.kinds), sources: new Set(current.sources), showDisabled: current.showDisabled, search: current.search };
-  const emit = (relayout: boolean): void => onChange({ filters: { kinds: new Set(f.kinds), sources: new Set(f.sources), showDisabled: f.showDisabled, search: f.search }, relayout });
+  const f: Filters = { ...current, kinds: new Set(current.kinds), sources: new Set(current.sources) };
+  const emit = (relayout: boolean): void => onChange({ filters: { ...f, kinds: new Set(f.kinds), sources: new Set(f.sources) }, relayout });
 
   const checkbox = (label: Node | string, checked: boolean, on: (v: boolean) => void, cls = 'chip'): HTMLLabelElement => {
     const input = h('input', { type: 'checkbox' });
@@ -71,6 +71,17 @@ export function renderFilters(container: HTMLElement, m: AtlasModel, current: Fi
     'chip toggle',
   );
 
+  const allCompetes = checkbox(
+    'Show all competes',
+    f.allCompetes,
+    (v) => {
+      f.allCompetes = v;
+      emit(false);
+    },
+    'chip toggle',
+  );
+  allCompetes.title = 'Off: only the strongest contests between enabled items. On: every competing pair, including faint lines to disabled items.';
+
   const search = h('input', { type: 'search', placeholder: 'Search names…', 'aria-label': 'Search' });
   search.value = f.search;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -82,5 +93,5 @@ export function renderFilters(container: HTMLElement, m: AtlasModel, current: Fi
     }, 150);
   });
 
-  container.replaceChildren(kinds, sources, disabled, search);
+  container.replaceChildren(kinds, sources, disabled, allCompetes, search);
 }

@@ -1,4 +1,5 @@
 // Side panel. Model text (names, descriptions, hook text, paths) is untrusted: it is only ever set via text nodes.
+import { defaultCompetes } from '../src/analyze/strength.js';
 import { EVERY_SESSION_ID, type AtlasModel, type CompeteReason, type Edge, type Item, type Source, type Tilt } from '../src/model.js';
 
 type Child = Node | string | number | null | undefined | false;
@@ -118,15 +119,20 @@ function renderItem(it: Item, ctx: PanelCtx): HTMLElement[] {
   }
   out.push(dl);
 
-  const comps = m.edges.filter((e) => e.kind === 'competes' && (e.from === it.id || e.to === it.id));
+  // Every competing pair, strongest first, including ones the map hides by default.
+  const comps = m.edges
+    .filter((e) => e.kind === 'competes' && (e.from === it.id || e.to === it.id))
+    .sort((a, b) => (b.competes?.strength ?? 0) - (a.competes?.strength ?? 0));
   if (comps.length) {
     const byId = new Map(m.items.map((i) => [i.id, i]));
+    const shown = defaultCompetes(m.edges, m.items);
     const ul = h('ul', { class: 'comp-list' });
     for (const e of comps) {
       const other = e.from === it.id ? e.to : e.from;
       const open = h('button', { type: 'button', class: 'link' }, 'why?');
       open.addEventListener('click', () => ctx.select({ type: 'edge', id: e.id }));
-      ul.append(h('li', null, itemLink(byId.get(other), other, ctx), ' ', open));
+      const note = `strength ${e.competes?.strength ?? 0}${shown.has(e.id) ? '' : ' · hidden by default'}`;
+      ul.append(h('li', null, itemLink(byId.get(other), other, ctx), ' ', h('span', { class: 'muted' }, note), ' ', open));
     }
     out.push(h('h3', null, `Competes with (${comps.length})`), ul);
   }
@@ -169,6 +175,7 @@ function renderEdge(e: Edge, ctx: PanelCtx): HTMLElement[] {
     const c = e.competes;
     const out: HTMLElement[] = [h('h2', null, 'Competes'), h('div', { class: 'pair' }, side(lookup(e.from), e.from, m), side(lookup(e.to), e.to, m))];
     out.push(h('h3', null, 'Why they compete'), h('ul', null, ...c.reasons.map((r) => h('li', null, reasonText(r, c.score)))));
+    out.push(h('p', { class: 'muted' }, `Strength ${c.strength}${defaultCompetes(m.edges, m.items).has(e.id) ? '' : ' — hidden by default; turn on “Show all competes” to draw it'}`));
     out.push(h('h3', null, 'What tilts it'));
     out.push(c.tilt.length ? h('ul', { class: 'tilt' }, ...c.tilt.map((t) => h('li', null, tiltText(t, lookup)))) : h('p', { class: 'muted' }, 'Nothing obvious tilts this contest.'));
     if (c.judge) {
@@ -212,8 +219,8 @@ function legend(): HTMLElement {
       'ul',
       null,
       entry('lg-line provides', 'source provides item'),
-      entry('lg-line competes', 'competes — both items on'),
-      entry('lg-line competes weak', 'competes — one item is off'),
+      entry('lg-line competes', 'competes — both items on (strongest pairs by default)'),
+      entry('lg-line competes weak', 'competes — one item is off (with “Show all competes”)'),
       entry('lg-line injects', 'hook injects into every session'),
       entry('lg-box traced', 'made by a plugin’s setup (outline in the plugin’s color)'),
       entry('lg-box ghost', 'candidate (not installed), or conditional instructions'),

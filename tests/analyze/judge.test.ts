@@ -9,7 +9,7 @@ import type { Edge, Item } from '../../src/model.js';
 const HELP = `Options:\n  --bare  x\n  --setting-sources <s>  x\n  --strict-mcp-config  x\n  --no-session-persistence  x\n  --disable-slash-commands  x\n`;
 const KEY = { ANTHROPIC_API_KEY: 'k' };
 const item = (id: string, description: string) => ({ id, description }) as Item;
-const edge: Edge = { id: 'e', kind: 'competes', from: 'a', to: 'b', competes: { reasons: [], score: 1, tilt: [] } };
+const edge: Edge = { id: 'e', kind: 'competes', from: 'a', to: 'b', competes: { reasons: [], score: 1, strength: 2, tilt: [] } };
 const mk = () => {
   const cacheDir = mkdtempSync(path.join(os.tmpdir(), 'judge-'));
   return { cacheDir, paths: { ...fixtureHome().paths, cacheDir } };

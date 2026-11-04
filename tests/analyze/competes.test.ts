@@ -3,7 +3,7 @@ import { fixtureHome } from '../fixtures.js';
 import { resolveSettings } from '../../src/scan/settings.js';
 import { scanPlugins } from '../../src/scan/plugins.js';
 import { scanLocal } from '../../src/scan/local.js';
-import { findCompetes, injectEdges, phasesOf } from '../../src/analyze/competes.js';
+import { findCompetes, injectEdges, phasesOf, scoreCompetes } from '../../src/analyze/competes.js';
 import { applyTilt } from '../../src/analyze/tilt.js';
 import { EVERY_SESSION_ID, type Item } from '../../src/model.js';
 
@@ -131,5 +131,36 @@ describe('findCompetes reasons', () => {
     const b = mk('b', 's2', 'basket', 'apple elder fig grape');
     expect(findCompetes([a, b])).toEqual([]);
     expect(findCompetes([a, b], 0.19)).toHaveLength(1);
+  });
+});
+
+describe('competes strength', () => {
+  it('scores reasons, phase evidence in names vs descriptions, and tilt', () => {
+    // phase in both names: +2
+    expect(findCompetes([mk('a', 's1', 'writing-plans', 'x'), mk('b', 's2', 'create-plan', 'y')])[0].competes!.strength).toBe(2);
+    // phase in one name and the other's description: +1
+    expect(findCompetes([mk('a', 's1', 'design', 'x'), mk('b', 's2', 'ideas', 'creative work')])[0].competes!.strength).toBe(1);
+    // descriptions only: +0.5
+    expect(findCompetes([mk('a', 's1', 'alpha', 'review code'), mk('b', 's2', 'beta', 'audit things')])[0].competes!.strength).toBe(0.5);
+    // name collision +3 (+ similar description +2 when the texts match)
+    expect(findCompetes([mk('a', 's1', 'helper', 'Alpha zeta'), mk('b', 's2', 'helper', 'Omega kappa')])[0].competes!.strength).toBe(3);
+    const d = 'Manage tropical fruit baskets for weekly customer deliveries';
+    expect(findCompetes([mk('a', 's1', 'fruit', d), mk('b', 's2', 'basket', d)])[0].competes!.strength).toBe(2);
+  });
+
+  it('scoreCompetes adds +1 for hook-injects and +0.5 for imperative wording', async () => {
+    const items = await ringZeroItems();
+    const edges = findCompetes(items);
+    applyTilt(edges, items);
+    scoreCompetes(edges, items);
+    const by = (x: string, y: string) =>
+      edges.find((e) => {
+        const n = [e.from, e.to].map((id) => items.find((i) => i.id === id)!.fullName);
+        return n.includes(x) && n.includes(y);
+      })!;
+    // design phase: "design" in design's name, "creative" in brainstorming's description (+1), hook +1, imperative +0.5
+    expect(by('superpowers:brainstorming', 'design').competes!.strength).toBe(2.5);
+    // plan phase in both names (+2), superpowers hook +1, imperative +0.5 ("Use when")
+    expect(by('superpowers:writing-plans', 'create-plan').competes!.strength).toBe(3.5);
   });
 });

@@ -52,12 +52,21 @@ test('competes edge, hook tilt, and candidate ghost node', async ({ page }) => {
     });
     return e.length ? { id: e[0].id() } : null;
   });
-  expect(edge, 'competes edge brainstorming<->design').not.toBeNull();
+  expect(edge, 'competes edge brainstorming<->design in the default view').not.toBeNull();
+
+  // The default view hides weaker pairs; "Show all competes" draws every one.
+  const count = () => page.evaluate(() => (window as any).__atlasCy.edges('.competes').length);
+  const defaultCount = await count();
+  await page.getByLabel('Show all competes').check();
+  await expect.poll(count).toBeGreaterThan(defaultCount);
+  await page.getByLabel('Show all competes').uncheck();
+  await expect.poll(count).toBe(defaultCount);
 
   await page.evaluate((id) => (window as any).__atlasCy.getElementById(id).emit('tap'), edge!.id);
   const panel = page.locator('#panel');
   await expect(panel).toContainText('Competes');
   await expect(panel).toContainText('injects instructions into every session');
+  await expect(panel).toContainText('superpowers SessionStart hook injects skill-use instructions into every session');
   await expect(panel).toContainText('Template for a design and brainstorm step');
   await expect(panel).toContainText('brainstorming');
   await expect(panel).toContainText('You MUST use this before any creative work');

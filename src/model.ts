@@ -41,7 +41,15 @@ export type Edge = {
   kind: 'provides' | 'competes' | 'injects';
   from: string;
   to: string;
-  competes?: { reasons: CompeteReason[]; score: number; tilt: Tilt[]; judge?: { same: boolean; why: string } };
+  competes?: {
+    reasons: CompeteReason[];
+    /** Description cosine similarity. */
+    score: number;
+    /** How strongly the pair competes (reasons, phase evidence in names, tilt); drives the default view and the judge. */
+    strength: number;
+    tilt: Tilt[];
+    judge?: { same: boolean; why: string };
+  };
 };
 export type AtlasModel = {
   project: string;

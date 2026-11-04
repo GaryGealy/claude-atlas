@@ -1,4 +1,4 @@
-import { EVERY_SESSION_ID, type CompeteReason, type Edge, type Item } from '../model.js';
+import { EVERY_SESSION_ID, type CompeteReason, type Edge, type Item, type Tilt } from '../model.js';
 import { cosineTf, termFreq } from '../util/text.js';
 
 const PHASES: [string, string[]][] = [
@@ -36,6 +36,30 @@ export function phasesOf(text: string): string[] {
 
 const PAIR_KINDS = new Set(['skill', 'agent', 'command']);
 
+/**
+ * Strength of a competing pair:
+ * name-collision +3; similar-description +2; per shared phase +2 when the phase is in both names, +1 when it is in one
+ * name and the other's description, +0.5 when only descriptions carry it; +1 for a hook-injects tilt, +0.5 for
+ * imperative wording.
+ */
+export function competeStrength(a: Item, b: Item, reasons: CompeteReason[], tilt: Tilt[] = []): number {
+  const [an, bn, ad, bd] = [phasesOf(a.name), phasesOf(b.name), phasesOf(a.description), phasesOf(b.description)];
+  let s = 0;
+  for (const r of reasons) {
+    if (r === 'name-collision') s += 3;
+    else if (r === 'similar-description') s += 2;
+    else {
+      const p = r.slice('phase:'.length);
+      if (an.includes(p) && bn.includes(p)) s += 2;
+      else if ((an.includes(p) && bd.includes(p)) || (bn.includes(p) && ad.includes(p))) s += 1;
+      else s += 0.5;
+    }
+  }
+  if (tilt.some((t) => t.kind === 'hook-injects')) s += 1;
+  if (tilt.some((t) => t.kind === 'imperative-wording')) s += 0.5;
+  return s;
+}
+
 export function findCompetes(items: Item[], threshold = 0.35): Edge[] {
   const cands = items
     .filter((i) => PAIR_KINDS.has(i.kind))
@@ -59,11 +83,22 @@ export function findCompetes(items: Item[], threshold = 0.35): Edge[] {
         kind: 'competes',
         from: a.item.id,
         to: b.item.id,
-        competes: { reasons, score: Math.round(sim * 100) / 100, tilt: [] },
+        competes: { reasons, score: Math.round(sim * 100) / 100, strength: competeStrength(a.item, b.item, reasons), tilt: [] },
       });
     }
   }
   return edges;
+}
+
+/** Recomputes every competes strength including tilt; run after applyTilt. */
+export function scoreCompetes(edges: Edge[], items: Item[]): void {
+  const byId = new Map(items.map((i) => [i.id, i]));
+  for (const e of edges) {
+    if (!e.competes) continue;
+    const a = byId.get(e.from);
+    const b = byId.get(e.to);
+    if (a && b) e.competes.strength = competeStrength(a, b, e.competes.reasons, e.competes.tilt);
+  }
 }
 
 export function injectEdges(items: Item[]): Edge[] {

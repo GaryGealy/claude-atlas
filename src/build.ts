@@ -10,7 +10,7 @@ import { scanMcp } from './scan/mcp.js';
 import { collectTemplates, traceItems } from './scan/trace.js';
 import { applyFired, countFired } from './scan/fired.js';
 import { loadJudgeSessions } from './analyze/judge.js';
-import { findCompetes, injectEdges } from './analyze/competes.js';
+import { findCompetes, injectEdges, scoreCompetes } from './analyze/competes.js';
 import { applyTilt } from './analyze/tilt.js';
 
 const DAY_MS = 86_400_000;
@@ -92,6 +92,7 @@ export async function buildModel(p: ClaudePaths, projectDir: string, opts: Build
   }
   edges.push(...injectEdges(items), ...findCompetes(items));
   applyTilt(edges, items);
+  scoreCompetes(edges, items);
 
   return {
     project: projectDir,
