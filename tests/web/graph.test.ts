@@ -138,7 +138,9 @@ describe('toElements', () => {
     const createPlan = item((i) => i.sourceId === 'project' && i.name === 'create-plan');
     expect(cls(byId(els, brain().id))).not.toContain('faded');
     expect(cls(byId(els, design().id))).not.toContain('faded');
-    expect(cls(byId(els, createPlan.id))).not.toContain('faded');
+    // brainstorming<->create-plan is below the strong cutoff and not either item's strongest edge: hidden by default, so not kept.
+    expect(cls(byId(els, createPlan.id))).toContain('faded');
+    expect(cls(byId(toElements(m, filters({ search: 'brain', allCompetes: true })), createPlan.id))).not.toContain('faded');
     expect(cls(byId(els, 'plugin:superpowers'))).not.toContain('faded');
     expect(cls(competesBetween(els, brain().id, design().id))).not.toContain('faded');
     const notes = item((i) => i.name === 'my-notes');

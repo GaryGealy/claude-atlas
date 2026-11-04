@@ -9,7 +9,7 @@ import type { Edge, Item } from '../../src/model.js';
 const HELP = `Options:\n  --bare  x\n  --tools <tools...>  x\n  --setting-sources <s>  x\n  --strict-mcp-config  x\n  --no-session-persistence  x\n  --disable-slash-commands  x\n`;
 const KEY = { ANTHROPIC_API_KEY: 'k' };
 const item = (id: string, description: string, enabled = true) => ({ id, description, enabled }) as Item;
-const edge: Edge = { id: 'e', kind: 'competes', from: 'a', to: 'b', competes: { reasons: [], score: 1, strength: 2, tilt: [] } };
+const edge: Edge = { id: 'e', kind: 'competes', from: 'a', to: 'b', competes: { reasons: [], score: 1, strength: 3, tilt: [] } };
 const mk = () => {
   const cacheDir = mkdtempSync(path.join(os.tmpdir(), 'judge-'));
   return { cacheDir, paths: { ...fixtureHome().paths, cacheDir } };
@@ -91,17 +91,17 @@ describe('judgePairs', () => {
     expect(cap.args).not.toContain('--safe-mode');
   });
 
-  it('judges only enabled pairs with strength >= 2, strongest first, at most 25', async () => {
+  it('judges only enabled pairs with strength >= 3, strongest first, at most 25', async () => {
     const { paths } = mk();
     const cap = await probeJudge(async () => HELP, KEY);
     const its: Item[] = [];
     const edges: Edge[] = [];
     for (let n = 0; n < 30; n++) {
       its.push(item(`x${n}`, `desc x${n}`), item(`y${n}`, `desc y${n}`));
-      edges.push({ id: `e${n}`, kind: 'competes', from: `x${n}`, to: `y${n}`, competes: { reasons: [], score: 0, strength: 2 + n / 10, tilt: [] } });
+      edges.push({ id: `e${n}`, kind: 'competes', from: `x${n}`, to: `y${n}`, competes: { reasons: [], score: 0, strength: 3 + n / 10, tilt: [] } });
     }
     its.push(item('w1', 'weak a'), item('w2', 'weak b'), item('off', 'off item', false));
-    edges.push({ id: 'weak', kind: 'competes', from: 'w1', to: 'w2', competes: { reasons: [], score: 0, strength: 1.5, tilt: [] } });
+    edges.push({ id: 'weak', kind: 'competes', from: 'w1', to: 'w2', competes: { reasons: [], score: 0, strength: 2.5, tilt: [] } });
     edges.push({ id: 'dis', kind: 'competes', from: 'w1', to: 'off', competes: { reasons: [], score: 0, strength: 9, tilt: [] } });
     const run = vi.fn<JudgeRun>(async () => '{"same": true, "why": "w"}');
     const summary = await judgePairs(edges, its, paths, cap, run);
@@ -119,8 +119,8 @@ describe('judgePairs', () => {
     const cap = await probeJudge(async () => HELP, KEY);
     const its = [item('a', 'one'), item('b', 'two'), item('c', 'three')];
     const edges: Edge[] = [
-      { id: 'ab', kind: 'competes', from: 'a', to: 'b', competes: { reasons: [], score: 0, strength: 3, tilt: [] } },
-      { id: 'ac', kind: 'competes', from: 'a', to: 'c', competes: { reasons: [], score: 0, strength: 2, tilt: [] } },
+      { id: 'ab', kind: 'competes', from: 'a', to: 'b', competes: { reasons: [], score: 0, strength: 4, tilt: [] } },
+      { id: 'ac', kind: 'competes', from: 'a', to: 'c', competes: { reasons: [], score: 0, strength: 3, tilt: [] } },
     ];
     let calls = 0;
     const run: JudgeRun = async () => {

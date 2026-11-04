@@ -121,7 +121,7 @@ function parseVerdict(out: string): { verdict: Verdict | null; sessionId: string
 }
 
 export type JudgeSummary = {
-  /** Pairs selected for judging (enabled↔enabled, strength ≥ 2, strongest first, capped). */
+  /** Pairs selected for judging (enabled↔enabled, strength ≥ 3, strongest first, capped). */
   candidates: number;
   /** Pairs that now carry a verdict (new or from the cache). */
   judged: number;

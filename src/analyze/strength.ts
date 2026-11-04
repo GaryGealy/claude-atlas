@@ -2,7 +2,7 @@
 import type { Edge, Item } from '../model.js';
 
 /** Edges at or above this strength show by default and are eligible for the judge. */
-export const STRONG_COMPETES = 2;
+export const STRONG_COMPETES = 3;
 /** At most this many pairs are sent to the judge per run. */
 export const JUDGE_CAP = 25;
 
