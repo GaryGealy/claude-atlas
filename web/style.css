@@ -247,9 +247,10 @@ input[type='search'] {
   position: absolute;
   right: -2px;
   top: -5px;
-  border-left: 6px solid var(--red);
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
+  width: 6px;
+  height: 8px;
+  background: var(--red);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
 }
 .lg-box {
   display: inline-block;
@@ -353,7 +354,8 @@ input[type='search'] {
 .callout {
   margin: 10px 0;
   padding: 8px 10px;
-  border-left: 4px solid var(--red);
+  border: 1px solid var(--red);
+  border-radius: 6px;
   background: #fef2f2;
   color: #991b1b;
   font-weight: 600;

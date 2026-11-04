@@ -5,6 +5,7 @@ import { defaultFilters, toElements, type Filters } from './graph.js';
 import { renderFilters } from './filters.js';
 import { createMap } from './map.js';
 import { h, renderPanel, renderWarnings, type Selection } from './panel.js';
+import { OTHER, pickerOptions, switchProject } from './project.js';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -29,7 +30,6 @@ const ui = {
   ccancel: $<HTMLButtonElement>('candidate-cancel'),
 };
 
-const OTHER = '__other__';
 const state: {
   project: string | null;
   model: AtlasModel | null;
@@ -117,6 +117,7 @@ function setModel(m: AtlasModel): void {
     ui.banner.replaceChildren(
       `Showing ${cand.map((s) => s.label).join(', ')} as ghost nodes — nothing is installed. `,
       hooks ? h('strong', null, `It has ${hooks} hook${hooks === 1 ? '' : 's'}: this would inject instructions into every session. `) : '',
+      h('span', { class: 'muted' }, 'Rescan, Check live MCP status and Ask Claude to judge also clear the candidate view. '),
       clear,
     );
   }
@@ -147,27 +148,39 @@ async function run(label: string, fn: () => Promise<AtlasModel>): Promise<boolea
   }
 }
 
+/** Switches only when the new project's model loads; on failure the previous project stays fully in effect. */
 async function openProject(path: string): Promise<void> {
-  state.project = path;
-  state.selection = null;
-  state.model = null;
-  state.filters = null;
-  await run('Scanning…', () => api.model(path));
+  setBusy(true, 'Scanning…');
+  showError(null);
+  const prev = { project: state.project, model: state.model, filters: state.filters, selection: state.selection };
+  const r = await switchProject(prev, path, (p) => api.model(p));
+  if (r.ok && r.view.model) {
+    state.project = r.view.project;
+    state.selection = null;
+    state.model = null;
+    state.filters = null;
+    setModel(r.view.model);
+  } else {
+    showError(r.error);
+    ui.status.textContent = state.model ? statusLine(state.model) : '';
+  }
+  fillProjects(projects, state.project);
+  if (!state.project) {
+    ui.project.value = OTHER;
+    ui.pathForm.hidden = false;
+  }
+  setBusy(false);
+  updateJudgeButton();
 }
 
 function fillProjects(list: ProjectEntry[], selected: string | null): void {
-  const opts = list.map((p) => {
-    const o = h('option', { value: p.path, title: p.path }, p.name);
-    o.selected = p.path === selected;
-    return o;
-  });
-  if (selected && !list.some((p) => p.path === selected)) {
-    const o = h('option', { value: selected, title: selected }, selected);
-    o.selected = true;
-    opts.unshift(o);
-  }
-  opts.push(h('option', { value: OTHER }, 'Enter a path…'));
-  ui.project.replaceChildren(...opts);
+  ui.project.replaceChildren(
+    ...pickerOptions(list, selected).map((o) => {
+      const el = h('option', o.title ? { value: o.value, title: o.title } : { value: o.value }, o.label);
+      el.selected = o.value === selected;
+      return el;
+    }),
+  );
 }
 
 let projects: ProjectEntry[] = [];
@@ -185,7 +198,6 @@ ui.pathForm.addEventListener('submit', (ev) => {
   const p = ui.pathInput.value.trim();
   if (!p) return;
   ui.pathForm.hidden = true;
-  fillProjects(projects, p);
   void openProject(p);
 });
 
@@ -251,10 +263,13 @@ async function init(): Promise<void> {
   }
   setBusy(true, 'Loading projects…');
   try {
-    const [list, cap] = await Promise.all([api.projects(), api.judgeCapability().catch(() => null)]);
+    const [list, cap] = await Promise.all([
+      api.projects(),
+      api.judgeCapability().catch((e: unknown): JudgeCapability => ({ available: false, reason: `Could not check: ${e instanceof Error ? e.message : String(e)}`, args: [] })),
+    ]);
     projects = list;
     state.capability = cap;
-    fillProjects(list, list[0]?.path ?? null);
+    fillProjects(list, null);
     setBusy(false);
     updateJudgeButton();
     if (list[0]) await openProject(list[0].path);
