@@ -1,5 +1,70 @@
 <!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8" /><title>Claude Atlas</title></head>
-  <body><div id="app"></div></body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claude Atlas</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script type="module" src="./main.ts"></script>
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="row">
+        <strong class="brand">Claude Atlas</strong>
+        <label class="picker">Viewing from
+          <select id="project" aria-label="Viewing from project"></select>
+        </label>
+        <form id="path-form" class="path-form" hidden>
+          <input id="path-input" type="text" placeholder="/path/to/project" aria-label="Project path" />
+          <button type="submit">Open</button>
+        </form>
+        <button id="rescan" type="button">Rescan</button>
+        <span class="action">
+          <button id="mcp-live" type="button" title="Runs `claude mcp list` from the project: starts stdio MCP servers and contacts remote ones.">Check live MCP status</button>
+          <small class="note">Starts MCP servers and contacts remote ones.</small>
+        </span>
+        <button id="candidate" type="button">Try a skill before installing…</button>
+        <span class="action">
+          <button id="judge" type="button">Ask Claude to judge</button>
+          <small class="note">Runs an isolated <code>claude -p</code>.</small>
+        </span>
+        <span id="status" class="status" role="status"></span>
+      </div>
+      <div class="row" id="filters"></div>
+      <div id="candidate-banner" class="banner" hidden></div>
+      <div id="error" class="error" role="alert" hidden></div>
+    </header>
+    <main class="body">
+      <div class="map-wrap">
+        <div id="map" aria-label="Environment map"></div>
+        <button id="fit" type="button" class="fit" title="Zoom out to show the whole map">Fit all</button>
+      </div>
+      <aside id="panel" class="panel" aria-live="polite"></aside>
+    </main>
+    <footer id="warnings" class="warnings" hidden></footer>
+
+    <dialog id="candidate-dialog">
+      <form id="candidate-form" method="dialog">
+        <h2>Try a skill before installing</h2>
+        <p class="note">A git URL or marketplace plugin is cloned (shallow) into Atlas's cache — this contacts the network. Nothing is installed.</p>
+        <fieldset>
+          <legend>Where is it?</legend>
+          <label><input type="radio" name="ckind" value="path" checked /> Local folder, SKILL.md or zip</label>
+          <label><input type="radio" name="ckind" value="git" /> Git repo URL</label>
+          <label><input type="radio" name="ckind" value="marketplace" /> Marketplace + plugin</label>
+        </fieldset>
+        <div data-kind="path"><input name="path" type="text" placeholder="/path/to/skill-or-plugin" aria-label="Path" /></div>
+        <div data-kind="git" hidden><input name="url" type="text" placeholder="https://github.com/owner/repo.git" aria-label="Git URL" /></div>
+        <div data-kind="marketplace" hidden>
+          <input name="marketplace" type="text" placeholder="marketplace" aria-label="Marketplace" />
+          <input name="plugin" type="text" placeholder="plugin" aria-label="Plugin" />
+        </div>
+        <p id="candidate-error" class="error" hidden></p>
+        <div class="dialog-actions">
+          <button type="button" id="candidate-cancel">Cancel</button>
+          <button type="submit" id="candidate-submit" value="load">Load candidate</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
 </html>
