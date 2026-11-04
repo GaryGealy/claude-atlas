@@ -23,7 +23,7 @@ export function tiltText(t: Tilt, lookup: (id: string) => Item | undefined): str
   const name = it?.name ?? t.itemId;
   switch (t.kind) {
     case 'hook-injects':
-      return `Favours ${name}: a hook injects instructions into every session that push Claude toward skills like this one (${t.detail}).`;
+      return `Favours ${name}: a hook injects instructions into every session, before Claude picks a skill (${t.detail}).`;
     case 'imperative-wording':
       return `Favours ${name}: its description uses imperative wording ("MUST", "Use when"), while the other only says what it does, so Claude tends to pick ${name} first.`;
     case 'disabled':

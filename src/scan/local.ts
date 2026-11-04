@@ -2,8 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ClaudePaths } from '../paths.js';
 import type { Item, Source } from '../model.js';
-import { readText } from '../util/fs.js';
-import { readAgents, readCommands, readHooks, readSkills } from './components.js';
+import { makeScriptResolver, readAgents, readCommands, readHooks, readSkills, type ScriptResolver } from './components.js';
 import type { ResolvedSettings } from './settings.js';
 
 type Warn = (m: string) => void;
@@ -12,27 +11,17 @@ function source(id: string, kind: Source['kind'], label: string): Source {
   return { id, kind, label, enabled: true, decidedBy: null };
 }
 
-/** Resolves the first path-like token of a hook command (against `root`, with project-dir vars substituted) and reads it. */
-function scriptResolver(root: string, projectDir: string | null, home: string): (cmd: string) => Promise<string | null> {
-  return async (cmd) => {
-    let c = cmd;
-    if (projectDir) c = c.replace(/\$\{CLAUDE_PROJECT_DIR\}|\$CLAUDE_PROJECT_DIR/g, projectDir);
-    c = c.replace(/"([^"]*)"(?=[^\s"])/g, '$1'); // "$VAR"/rest -> glue quoted prefix to the remainder
-    const tokens = c.match(/"[^"]+"|'[^']+'|\S+/g) ?? [];
-    for (const raw of tokens) {
-      let tok = raw.replace(/^["']|["']$/g, '');
-      if (!tok.includes('/')) continue;
-      if (tok === '~' || tok.startsWith('~/')) tok = path.join(home, tok.slice(1));
-      try {
-        const file = path.resolve(root, tok);
-        if ((await fs.stat(file)).isFile()) return await readText(file);
-      } catch {
-        // not a readable file
-      }
-      return null;
-    }
-    return null;
-  };
+/**
+ * Settings hooks may only have scripts read from ~/.claude (which holds the plugin caches), <project>/.claude, or the
+ * managed dir for managed hooks; anything else on disk is never opened.
+ */
+function scriptResolver(p: ClaudePaths, base: string, projectDir: string | null, extraAllowed: string[] = []): ScriptResolver {
+  return makeScriptResolver({
+    base,
+    allowed: [p.claudeDir, ...(projectDir ? [path.join(projectDir, '.claude')] : []), ...extraAllowed],
+    vars: projectDir ? { CLAUDE_PROJECT_DIR: projectDir } : {},
+    home: p.home,
+  });
 }
 
 function applyOverrides(items: Item[], s: ResolvedSettings): Item[] {
@@ -52,7 +41,7 @@ async function dirItems(dir: string, sourceId: string, ns: string | null, s: Res
   ];
 }
 
-async function hookItems(s: ResolvedSettings, sourceId: 'user' | 'project' | 'managed', resolve: (c: string) => Promise<string | null>): Promise<Item[]> {
+async function hookItems(s: ResolvedSettings, sourceId: 'user' | 'project' | 'managed', resolve: ScriptResolver): Promise<Item[]> {
   const out: Item[] = [];
   const counters = new Map<string, number>();
   for (const h of s.hooks.filter((x) => x.sourceId === sourceId)) {
@@ -77,7 +66,7 @@ export async function scanLocal(p: ClaudePaths, projectDir: string, s: ResolvedS
 
   sources.push(source('user', 'user', 'You (global)'));
   items.push(...(await dirItems(p.claudeDir, 'user', null, s, warn)));
-  items.push(...(await hookItems(s, 'user', scriptResolver(p.home, null, p.home))));
+  items.push(...(await hookItems(s, 'user', scriptResolver(p, p.home, null))));
 
   sources.push(source('synced', 'synced', 'claude.ai (synced)'));
   const syncedRoot = path.join(p.claudeDir, 'skills', 'synced');
@@ -92,13 +81,13 @@ export async function scanLocal(p: ClaudePaths, projectDir: string, s: ResolvedS
   if (await exists(p.managedDir)) {
     sources.push(source('managed', 'managed', 'Managed'));
     items.push(...(await dirItems(p.managedDir, 'managed', null, s, warn)));
-    items.push(...(await hookItems(s, 'managed', scriptResolver(p.managedDir, null, p.home))));
+    items.push(...(await hookItems(s, 'managed', scriptResolver(p, p.managedDir, null, [p.managedDir]))));
   }
 
   sources.push(source('project', 'project', path.basename(projectDir)));
   const claude = path.join(projectDir, '.claude');
   items.push(...(await dirItems(claude, 'project', null, s, warn)));
-  items.push(...(await hookItems(s, 'project', scriptResolver(projectDir, projectDir, p.home))));
+  items.push(...(await hookItems(s, 'project', scriptResolver(p, projectDir, projectDir))));
 
   return { sources, items };
 }

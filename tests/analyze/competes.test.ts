@@ -70,6 +70,48 @@ describe('competes', () => {
 const mk = (id: string, sourceId: string, name: string, description: string): Item => ({
   id, kind: 'skill', name, fullName: name, sourceId, path: id, description, enabled: true, decidedBy: null,
 });
+const hook = (id: string, sourceId: string, text: string, mentionsSkills: boolean, ghost = false): Item => ({
+  ...mk(id, sourceId, 'SessionStart', ''),
+  kind: 'hook',
+  ...(ghost ? { ghost: true } : {}),
+  hook: { event: 'SessionStart', matcher: null, command: 'x', text, mentionsSkills },
+});
+
+describe('hook-injects tilt', () => {
+  it('real superpowers layout: the fixture hook tilts brainstorming with generic skill-use wording', async () => {
+    const items = await ringZeroItems();
+    const edges = findCompetes(items);
+    applyTilt(edges, items);
+    const brain = items.find((i) => i.fullName === 'superpowers:brainstorming')!;
+    const t = edges.flatMap((e) => e.competes!.tilt).find((x) => x.itemId === brain.id && x.kind === 'hook-injects')!;
+    expect(t.detail).toBe('superpowers SessionStart hook injects skill-use instructions into every session');
+  });
+
+  it('says the hook names the item when the match came from the item name in hook text', () => {
+    const a = mk('a', 's1', 'design', 'design things');
+    const b = mk('b', 's2', 'sketch', 'design sketches');
+    const items = [a, b, hook('h', 'user', 'echo "always run the design skill first"', false)];
+    const edges = findCompetes(items);
+    applyTilt(edges, items);
+    expect(edges[0].competes!.tilt).toEqual([{ itemId: 'a', kind: 'hook-injects', detail: 'user SessionStart hook names design in what it injects into every session' }]);
+  });
+
+  it('a ghost (candidate) hook only tilts edges that touch a ghost item', () => {
+    const a = mk('a', 's1', 'design', 'design things');
+    const b = mk('b', 's2', 'sketch', 'design sketches');
+    const g = { ...mk('g', 'candidate:x', 'draw', 'design drawings'), ghost: true };
+    const items = [a, b, g, hook('h', 'candidate:x', 'use the design skill', true, true)];
+    const edges = findCompetes(items);
+    applyTilt(edges, items);
+    const ab = edges.find((e) => e.from === 'a' && e.to === 'b')!;
+    expect(ab.competes!.tilt).toEqual([]);
+    const ag = edges.find((e) => [e.from, e.to].sort().join() === 'a,g')!;
+    expect(ag.competes!.tilt.map((t) => [t.itemId, t.kind])).toEqual([
+      ['a', 'hook-injects'],
+      ['g', 'hook-injects'],
+    ]);
+  });
+});
 
 describe('findCompetes reasons', () => {
   it('flags name-collision across sources', () => {

@@ -47,14 +47,34 @@ describe('scanLocal', () => {
     expect(it.decidedBy).toContain('settings.local.json');
   });
 
-  it('resolves project hook scripts via CLAUDE_PROJECT_DIR', async () => {
+  it('resolves project hook scripts via CLAUDE_PROJECT_DIR inside <project>/.claude', async () => {
     const { paths, dir } = await run('ringZero');
-    fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'scripts', 'h.sh'), 'echo load skill');
-    fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: '"$CLAUDE_PROJECT_DIR"/scripts/h.sh' }] }] } }));
+    fs.mkdirSync(path.join(dir, '.claude', 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.claude', 'hooks', 'h.sh'), 'echo load skill');
+    fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: '"$CLAUDE_PROJECT_DIR"/.claude/hooks/h.sh' }] }] } }));
     const r = await scanLocal(paths, dir, await resolveSettings(paths, dir), () => {});
     const h = r.items.find((i) => i.kind === 'hook' && i.sourceId === 'project')!;
     expect(h.hook!.mentionsSkills).toBe(true);
+    expect(h.hook!.text).toContain('echo load skill');
+  });
+
+  it('never reads settings-hook scripts outside ~/.claude or <project>/.claude', async () => {
+    const { paths, dir } = await run('ringZero');
+    fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'scripts', 'h.sh'), 'echo load skill');
+    fs.writeFileSync(path.join(paths.home, 'notes.sh'), 'echo skill at home');
+    fs.mkdirSync(path.join(paths.claudeDir, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(paths.claudeDir, 'hooks', 'ok.sh'), 'echo user skill');
+    fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: '"$CLAUDE_PROJECT_DIR"/scripts/h.sh' }] }] } }));
+    fs.writeFileSync(
+      path.join(paths.claudeDir, 'settings.local.json'),
+      JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: '~/notes.sh' }, { type: 'command', command: '~/.claude/hooks/ok.sh' }] }] } }),
+    );
+    const r = await scanLocal(paths, dir, await resolveSettings(paths, dir), () => {});
+    const text = (cmd: string) => r.items.find((i) => i.kind === 'hook' && i.hook!.command === cmd)!.hook!;
+    expect(text('"$CLAUDE_PROJECT_DIR"/scripts/h.sh')).toMatchObject({ text: '"$CLAUDE_PROJECT_DIR"/scripts/h.sh', mentionsSkills: false });
+    expect(text('~/notes.sh')).toMatchObject({ text: '~/notes.sh', mentionsSkills: false });
+    expect(text('~/.claude/hooks/ok.sh').text).toContain('echo user skill');
   });
 
   it('keeps hook ids unique across settings layers sharing a source', async () => {

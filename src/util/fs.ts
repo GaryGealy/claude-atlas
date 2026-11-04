@@ -56,3 +56,19 @@ export async function* walkDirs(dir: string, opts: WalkOpts = {}): AsyncGenerato
   }
   yield* rec(dir, root, new Set(), 0);
 }
+
+/** Reads at most `max` bytes from the start of a regular file; null when unreadable or not a regular file. */
+export async function readHead(file: string, max = 4096): Promise<Buffer | null> {
+  let fh: fs.FileHandle | undefined;
+  try {
+    fh = await fs.open(file, 'r');
+    if (!(await fh.stat()).isFile()) return null;
+    const buf = Buffer.alloc(max);
+    const { bytesRead } = await fh.read(buf, 0, max, 0);
+    return buf.subarray(0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    await fh?.close();
+  }
+}

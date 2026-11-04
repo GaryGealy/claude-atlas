@@ -27,20 +27,65 @@ describe('component readers', () => {
     expect(items[0].id).toBe(`skill:plugin:superpowers:${items[0].fullName}`);
   });
 
-  it('reads hooks with resolved script', async () => {
+  it('reads the real superpowers layout: run-hook.cmd wrapper plus the named session-start script', async () => {
     const { paths } = fixtureHome();
     const root = pluginRoot(paths.home);
     const json = JSON.parse(fs.readFileSync(path.join(root, 'hooks/hooks.json'), 'utf8'));
     const items = await readHooks(json, 'plugin:superpowers', path.join(root, 'hooks/hooks.json'), pluginScriptResolver(root));
     expect(items).toHaveLength(1);
-    expect(items[0].hook).toMatchObject({ event: 'SessionStart', matcher: 'startup', mentionsSkills: true });
+    expect(items[0].hook).toMatchObject({ event: 'SessionStart', matcher: 'startup|clear|compact', mentionsSkills: true });
     expect(items[0].id).toBe('hook:plugin:superpowers:SessionStart:0');
+    // The wrapper alone never mentions skills; the session-start script does.
+    expect(fs.readFileSync(path.join(root, 'hooks/run-hook.cmd'), 'utf8')).not.toMatch(/skill/i);
+    expect(items[0].hook!.text).toContain('CMDBLOCK');
+    expect(items[0].hook!.text).toContain('using-superpowers/SKILL.md');
+  });
+
+  it('still reads a hook that runs its script directly', async () => {
+    const { paths } = fixtureHome();
+    const root = pluginRoot(paths.home);
+    const json = { SessionStart: [{ hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh' }] }] };
+    const [h] = await readHooks(json, 'plugin:superpowers', '/x', pluginScriptResolver(root));
+    expect(h.hook!.mentionsSkills).toBe(true);
+    expect(h.hook!.text).toContain('invoke the Skill tool');
   });
 
   it('accepts the bare settings.json hooks form', async () => {
-    const items = await readHooks({ Stop: [{ hooks: [{ type: 'command', command: 'echo hi' }] }] }, 's', '/x', async () => null);
+    const items = await readHooks({ Stop: [{ hooks: [{ type: 'command', command: 'echo hi' }] }] }, 's', '/x', async () => []);
     expect(items).toHaveLength(1);
     expect(items[0].hook?.mentionsSkills).toBe(false);
+  });
+
+  it('mentionsSkills comes from script bodies and command words, not a path that contains /skills/', async () => {
+    const d = tmp();
+    fs.mkdirSync(path.join(d, 'skills/x'), { recursive: true });
+    fs.writeFileSync(path.join(d, 'skills/x/run.sh'), '#!/bin/sh\necho hello\n');
+    const r = pluginScriptResolver(d);
+    const [byPath] = await readHooks({ SessionStart: [{ hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/skills/x/run.sh' }] }] }, 's', '/x', r);
+    expect(byPath.hook!.mentionsSkills).toBe(false);
+    const [byWords] = await readHooks({ SessionStart: [{ hooks: [{ type: 'command', command: 'echo "use your skills"' }] }] }, 's', '/x', r);
+    expect(byWords.hook!.mentionsSkills).toBe(true);
+  });
+
+  it('plugin resolver stays inside the plugin root (real path), skips binary and non-script files, reads ≤4 KB', async () => {
+    const d = tmp();
+    const root = path.join(d, 'plugin');
+    fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(d, 'outside.sh'), 'echo skill outside');
+    fs.symlinkSync(path.join(d, 'outside.sh'), path.join(root, 'hooks/link.sh'));
+    fs.writeFileSync(path.join(root, 'hooks/bin'), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 0, 0x73, 0x6b, 0x69, 0x6c, 0x6c]));
+    fs.writeFileSync(path.join(root, 'hooks/data.png'), 'skill');
+    fs.writeFileSync(path.join(root, 'hooks/big.sh'), 'x'.repeat(10_000) + 'skill');
+    const r = pluginScriptResolver(root);
+    expect(await r('${CLAUDE_PLUGIN_ROOT}/hooks/link.sh')).toEqual([]);
+    expect(await r('${CLAUDE_PLUGIN_ROOT}/../outside.sh')).toEqual([]);
+    expect(await r('${CLAUDE_PLUGIN_ROOT}/hooks/bin')).toEqual([]);
+    expect(await r('${CLAUDE_PLUGIN_ROOT}/hooks/data.png')).toEqual([]);
+    const [big] = await r('${CLAUDE_PLUGIN_ROOT}/hooks/big.sh');
+    expect(big.length).toBe(4096);
+    expect(big).not.toContain('skill');
+    // A follow-up token that escapes the root is not read either.
+    expect(await r('${CLAUDE_PLUGIN_ROOT}/hooks/big.sh ../../outside.sh')).toHaveLength(1);
   });
 
   it('skips synced dir', async () => {
