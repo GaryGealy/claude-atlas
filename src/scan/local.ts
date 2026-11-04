@@ -52,13 +52,12 @@ async function dirItems(dir: string, sourceId: string, ns: string | null, s: Res
   ];
 }
 
-async function hookItems(s: ResolvedSettings, sourceId: 'user' | 'project' | 'managed', resolve: (c: string) => Promise<string | null>, warn: Warn): Promise<Item[]> {
-  void warn;
+async function hookItems(s: ResolvedSettings, sourceId: 'user' | 'project' | 'managed', resolve: (c: string) => Promise<string | null>): Promise<Item[]> {
   const out: Item[] = [];
+  const counters = new Map<string, number>();
   for (const h of s.hooks.filter((x) => x.sourceId === sourceId)) {
-    const found = await readHooks(h.json, sourceId, h.file, resolve);
-    // several settings layers share a source id; keep ids unique
-    for (const it of found) out.push({ ...it, id: `${it.id}@${path.basename(h.file)}` });
+    // settings layers share a source id; the shared counters keep ids unique
+    out.push(...(await readHooks(h.json, sourceId, h.file, resolve, counters)));
   }
   return out;
 }
@@ -78,7 +77,7 @@ export async function scanLocal(p: ClaudePaths, projectDir: string, s: ResolvedS
 
   sources.push(source('user', 'user', 'You (global)'));
   items.push(...(await dirItems(p.claudeDir, 'user', null, s, warn)));
-  items.push(...(await hookItems(s, 'user', scriptResolver(p.home, null, p.home), warn)));
+  items.push(...(await hookItems(s, 'user', scriptResolver(p.home, null, p.home))));
 
   sources.push(source('synced', 'synced', 'claude.ai (synced)'));
   const syncedRoot = path.join(p.claudeDir, 'skills', 'synced');
@@ -93,13 +92,13 @@ export async function scanLocal(p: ClaudePaths, projectDir: string, s: ResolvedS
   if (await exists(p.managedDir)) {
     sources.push(source('managed', 'managed', 'Managed'));
     items.push(...(await dirItems(p.managedDir, 'managed', null, s, warn)));
-    items.push(...(await hookItems(s, 'managed', scriptResolver(p.managedDir, null, p.home), warn)));
+    items.push(...(await hookItems(s, 'managed', scriptResolver(p.managedDir, null, p.home))));
   }
 
   sources.push(source('project', 'project', path.basename(projectDir)));
   const claude = path.join(projectDir, '.claude');
   items.push(...(await dirItems(claude, 'project', null, s, warn)));
-  items.push(...(await hookItems(s, 'project', scriptResolver(projectDir, projectDir, p.home), warn)));
+  items.push(...(await hookItems(s, 'project', scriptResolver(projectDir, projectDir, p.home))));
 
   return { sources, items };
 }

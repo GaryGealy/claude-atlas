@@ -57,6 +57,14 @@ describe('scanLocal', () => {
     expect(h.hook!.mentionsSkills).toBe(true);
   });
 
+  it('keeps hook ids unique across settings layers sharing a source', async () => {
+    const { paths, dir } = await run('ringZero');
+    fs.writeFileSync(path.join(paths.claudeDir, 'settings.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo a' }] }] } }));
+    fs.writeFileSync(path.join(paths.claudeDir, 'settings.local.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo b' }] }] } }));
+    const r = await scanLocal(paths, dir, await resolveSettings(paths, dir), () => {});
+    expect(r.items.filter((i) => i.kind === 'hook' && i.sourceId === 'user').map((i) => i.id)).toEqual(['hook:user:Stop:0', 'hook:user:Stop:1']);
+  });
+
   it('plain project: project source exists with no items, nothing throws', async () => {
     const { r } = await run('plain');
     expect(r.sources.some((s) => s.id === 'project' && s.label === 'plain')).toBe(true);

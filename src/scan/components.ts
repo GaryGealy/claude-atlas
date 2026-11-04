@@ -117,6 +117,8 @@ export async function readHooks(
   sourceId: string,
   filePath: string,
   resolveScript: (cmd: string) => Promise<string | null>,
+  /** Optional per-event counters, shared across calls so ids stay unique when several files feed one source. */
+  counters: Map<string, number> = new Map(),
 ): Promise<Item[]> {
   const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
   if (!isObj(hooksJson)) return [];
@@ -124,7 +126,7 @@ export async function readHooks(
   const items: Item[] = [];
   for (const [event, groups] of Object.entries(byEvent)) {
     if (!Array.isArray(groups)) continue;
-    let index = 0;
+    let index = counters.get(event) ?? 0;
     for (const group of groups) {
       if (!isObj(group) || !Array.isArray(group.hooks)) continue;
       const matcher = typeof group.matcher === 'string' ? group.matcher : null;
@@ -147,6 +149,7 @@ export async function readHooks(
         index++;
       }
     }
+    counters.set(event, index);
   }
   return items;
 }
