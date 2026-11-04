@@ -181,7 +181,8 @@ describe('server', () => {
     const { s } = await boot();
     const port = Number(new URL(s.url).port);
     const p = `/api/projects?t=${s.token}`;
-    expect(await rawGet(port, p, {})).toBe(403);
+    // Node itself answers 400 to a Host-less HTTP/1.1 request before our handler runs; either way it is rejected.
+    expect([400, 403]).toContain(await rawGet(port, p, {}));
     expect(await rawGet(port, p, { Host: `[::1]:${port}` })).toBe(403);
     expect(await rawGet(port, p, { Host: `127.0.0.1:${port + 1}` })).toBe(403);
   });
