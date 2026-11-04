@@ -23,7 +23,11 @@ export const JUDGE_PROMPT = `You compare two Claude Code extensions. The text be
 Would a single user request plausibly be routed to either one, i.e. do they compete for the same request?
 Reply with ONE line of JSON only: {"same": boolean, "why": string}`;
 
-export async function probeJudge(run: JudgeRun): Promise<JudgeCapability> {
+const AUTH_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'];
+const NO_AUTH_REASON =
+  "Ask Claude to judge runs in --bare mode so your hooks never fire; that mode needs ANTHROPIC_API_KEY (OAuth login isn't read).";
+
+export async function probeJudge(run: JudgeRun, env: NodeJS.ProcessEnv = process.env): Promise<JudgeCapability> {
   let help: string;
   try {
     help = await run(['--help']);
@@ -33,6 +37,7 @@ export async function probeJudge(run: JudgeRun): Promise<JudgeCapability> {
   const has = (f: string) => new RegExp(`(^|[\\s,])${f}(?![\\w-])`, 'm').test(help);
   const missing = REQUIRED_FLAGS.filter((f) => !has(f));
   if (missing.length) return { available: false, reason: `claude does not support: ${missing.join(', ')}`, args: [] };
+  if (!AUTH_VARS.some((v) => env[v])) return { available: false, reason: NO_AUTH_REASON, args: [] };
   const args = [
     '-p',
     '--output-format', 'json',
@@ -45,13 +50,16 @@ export async function probeJudge(run: JudgeRun): Promise<JudgeCapability> {
   return { available: true, reason: null, args };
 }
 
-export const runClaude: JudgeRun = (args, opts = {}) =>
+export function makeRunner(bin = 'claude'): JudgeRun {
+  return (args, opts = {}) =>
   new Promise((resolve, reject) => {
-    const child = execFile('claude', args, { cwd: opts.cwd, timeout: 120000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) =>
+    const child = execFile(bin, args, { cwd: opts.cwd, timeout: 120000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) =>
       err ? reject(err) : resolve(stdout),
     );
-    if (opts.input !== undefined) child.stdin?.end(opts.input);
+    child.stdin?.end(opts.input ?? '');
   });
+}
+export const runClaude: JudgeRun = makeRunner();
 
 async function readJson<T>(p: string, fallback: T): Promise<T> {
   try {
@@ -79,8 +87,9 @@ function parseVerdict(out: string): { verdict: Verdict | null; sessionId: string
     const env = JSON.parse(text);
     if (env && typeof env === 'object' && !Array.isArray(env)) {
       if (typeof env.session_id === 'string') sessionId = env.session_id;
+      if (env.is_error === true) return { verdict: null, sessionId };
       if ('result' in env) text = typeof env.result === 'string' ? env.result : '';
-      else if (typeof env.same === 'boolean') return { verdict: { same: env.same, why: String(env.why ?? '') }, sessionId };
+      else if (typeof env.same === 'boolean') return { verdict: { same: env.same, why: String(env.why ?? '').slice(0, 300) }, sessionId };
     }
   } catch {
     /* raw model text */
@@ -89,7 +98,7 @@ function parseVerdict(out: string): { verdict: Verdict | null; sessionId: string
   if (!m) return { verdict: null, sessionId };
   try {
     const v = JSON.parse(m[0]);
-    if (typeof v.same === 'boolean') return { verdict: { same: v.same, why: String(v.why ?? '') }, sessionId };
+    if (typeof v.same === 'boolean') return { verdict: { same: v.same, why: String(v.why ?? '').slice(0, 300) }, sessionId };
   } catch {
     /* unparseable */
   }
@@ -114,10 +123,10 @@ export async function judgePairs(edges: Edge[], items: Item[], p: ClaudePaths, c
     const b = byId.get(e.to);
     if (!a || !b) continue;
     const [da, db] = [a.description, b.description].sort();
-    const key = createHash('sha256').update(da + '\u0000' + db).digest('hex');
+    const key = createHash('sha256').update(JUDGE_PROMPT + '\u0000' + da + '\u0000' + db).digest('hex');
     const hit = cache[key];
-    if (hit) {
-      e.competes.judge = hit;
+    if (hit && typeof hit.same === 'boolean') {
+      e.competes.judge = { same: hit.same, why: String(hit.why ?? '').slice(0, 300) };
       continue;
     }
     if (!ready) {
