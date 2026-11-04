@@ -161,4 +161,87 @@ describe('loadCandidate', () => {
     await expect(loadCandidate({ kind: 'marketplace', marketplace: 'nope', plugin: 'x' }, p, git)).rejects.toThrow(/Unknown marketplace/);
     await expect(loadCandidate({ kind: 'marketplace', marketplace: 'm1', plugin: 'nope' }, p, git)).rejects.toThrow(/not found/);
   });
+
+  it('zip entry-count cap (5000) is enforced', async () => {
+    const { p } = setup();
+    const files: Record<string, Uint8Array> = { 'SKILL.md': strToU8(SKILL) };
+    for (let n = 0; n < 5001; n++) files[`f${n}.txt`] = strToU8('x');
+    const zip = path.join(tmp(), 'many.zip');
+    fs.writeFileSync(zip, zipSync(files));
+    await expect(loadCandidate({ kind: 'path', path: zip }, p)).rejects.toThrow(/too many entries/);
+  });
+
+  it('garbage and truncated zips give a clear error', async () => {
+    const { p } = setup();
+    const d = tmp();
+    const bad = path.join(d, 'bad.zip');
+    fs.writeFileSync(bad, 'this is not a zip at all');
+    await expect(loadCandidate({ kind: 'path', path: bad }, p)).rejects.toThrow(/Not a valid zip/);
+    const good = zipSync({ 'SKILL.md': strToU8(SKILL) });
+    const trunc = path.join(d, 'trunc.zip');
+    fs.writeFileSync(trunc, good.subarray(0, Math.floor(good.length / 2)));
+    await expect(loadCandidate({ kind: 'path', path: trunc }, p)).rejects.toThrow(/Not a valid zip/);
+  });
+
+  it('a single SKILL.md at a clone root does not scan sibling cached candidates', async () => {
+    const { p, cache } = setup();
+    write(path.join(cache, 'candidates', 'other', 'SKILL.md'), '---\nname: other\ndescription: Other\n---\n');
+    const git = async (args: string[]) => write(path.join(args[4], 'SKILL.md'), SKILL);
+    const cand = await loadCandidate({ kind: 'git', url: 'https://github.com/acme/x.git' }, p, git);
+    expect(cand.items.map((i) => i.fullName)).toEqual(['research']);
+  });
+
+  it('symlinks inside a clone that point outside it are not read', async () => {
+    const { p } = setup();
+    const outside = tmp();
+    write(path.join(outside, 'secret', 'SKILL.md'), '---\nname: stolen\ndescription: SECRET-DESC\n---\n');
+    write(path.join(outside, 'passwd.md'), 'SECRET-FILE');
+    const git = async (args: string[]) => {
+      const d = args[4];
+      write(path.join(d, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'evil' }));
+      write(path.join(d, 'skills', 'ok', 'SKILL.md'), '---\nname: ok\ndescription: fine\n---\n');
+      fs.symlinkSync(path.join(outside, 'secret'), path.join(d, 'skills', 'linked'));
+      fs.symlinkSync(path.join(outside, 'passwd.md'), path.join(d, 'skills', 'ok', 'extra.md'));
+      fs.mkdirSync(path.join(d, 'agents'));
+      fs.symlinkSync(path.join(outside, 'passwd.md'), path.join(d, 'agents', 'a.md'));
+    };
+    const cand = await loadCandidate({ kind: 'git', url: 'https://github.com/acme/evil.git' }, p, git);
+    expect(cand.items.map((i) => i.fullName)).toEqual(['evil:ok']);
+    expect(JSON.stringify(cand)).not.toContain('SECRET');
+  });
+
+  it('a symlinked skills dir pointing outside a clone yields nothing', async () => {
+    const { p } = setup();
+    const outside = tmp();
+    write(path.join(outside, 's', 'SKILL.md'), '---\nname: s\ndescription: SECRET-DESC\n---\n');
+    const git = async (args: string[]) => {
+      write(path.join(args[4], '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'evil2' }));
+      fs.symlinkSync(outside, path.join(args[4], 'skills'));
+    };
+    const cand = await loadCandidate({ kind: 'git', url: 'https://github.com/acme/evil2.git' }, p, git);
+    expect(cand.items).toEqual([]);
+  });
+
+  it('marketplace: git-subdir ../ escape, relative source escape and symlinked source all error', async () => {
+    const { p } = setup();
+    const outside = tmp();
+    write(path.join(outside, 'skills', 'x', 'SKILL.md'), SKILL);
+    const mkt = path.join(tmp(), 'mkt');
+    write(
+      path.join(mkt, '.claude-plugin', 'marketplace.json'),
+      JSON.stringify({
+        plugins: [
+          { name: 'sub', source: { source: 'git-subdir', url: 'https://github.com/acme/mono.git', path: '../..' } },
+          { name: 'rel', source: '../../..' },
+          { name: 'sym', source: './link' },
+        ],
+      }),
+    );
+    fs.symlinkSync(outside, path.join(mkt, 'link'));
+    write(path.join(p.claudeDir, 'plugins', 'known_marketplaces.json'), JSON.stringify({ m: { installLocation: mkt } }));
+    const git = async (args: string[]) => write(path.join(args[4], 'README.md'), 'x');
+    for (const plugin of ['sub', 'rel', 'sym']) {
+      await expect(loadCandidate({ kind: 'marketplace', marketplace: 'm', plugin }, p, git)).rejects.toThrow(/escapes/);
+    }
+  });
 });

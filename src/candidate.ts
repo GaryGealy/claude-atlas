@@ -6,7 +6,7 @@ import { unzipSync } from 'fflate';
 import type { ClaudePaths } from './paths.js';
 import type { Item, Source } from './model.js';
 import { readText } from './util/fs.js';
-import { readSkills } from './scan/components.js';
+import { parseFrontmatter } from './util/frontmatter.js';
 import { readPluginDir } from './scan/plugins.js';
 import { mcpItemsFrom } from './scan/mcp.js';
 
@@ -24,7 +24,7 @@ const sha = (s: string): string => crypto.createHash('sha256').update(s).digest(
 
 export function runGit(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile('git', args, { timeout: 120000 }, (err) => (err ? reject(err) : resolve()));
+    execFile('git', args, { timeout: 120000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (err) => (err ? reject(err) : resolve()));
   });
 }
 
@@ -81,14 +81,20 @@ async function extractZip(zipFile: string, target: string): Promise<string> {
   const links = zipSymlinks(buf);
   let entries = 0;
   let total = 0;
-  const files = unzipSync(buf, {
+  let files: ReturnType<typeof unzipSync>;
+  try {
+    files = unzipSync(buf, {
     filter(f) {
       if (++entries > MAX_ZIP_ENTRIES) throw new Error(`Zip has too many entries (limit ${MAX_ZIP_ENTRIES})`);
       total += f.originalSize;
       if (total > MAX_ZIP_BYTES) throw new Error(`Zip is too large uncompressed (limit ${MAX_ZIP_BYTES} bytes)`);
       return !links.has(f.name) && !f.name.startsWith('__MACOSX/');
     },
-  });
+    });
+  } catch (e) {
+    const m = (e as Error).message;
+    throw new Error(/too (many|large)/.test(m) ? m : `Not a valid zip file: ${zipFile} (${m})`);
+  }
   const root = path.resolve(target);
   let actual = 0;
   const planned: [string, Uint8Array][] = [];
@@ -118,14 +124,45 @@ function validateGitUrl(url: string): void {
   }
 }
 
+/** Removes symlinks in an untrusted clone whose real target lies outside the clone, so no reader can follow them. */
+async function sanitizeClone(root: string): Promise<void> {
+  const real = await fs.realpath(root);
+  const walk = async (dir: string): Promise<void> => {
+    for (const e of await fs.readdir(dir, { withFileTypes: true })) {
+      if (e.name === '.git') continue;
+      const full = path.join(dir, e.name);
+      if (e.isSymbolicLink()) {
+        let target: string | null = null;
+        try {
+          target = await fs.realpath(full);
+        } catch {
+          /* dangling or looping */
+        }
+        if (!target || !within(real, target)) await fs.rm(full, { force: true });
+      } else if (e.isDirectory()) await walk(full);
+    }
+  };
+  await walk(real);
+}
+
 async function cloneInto(url: string, p: ClaudePaths, git: GitRunner, identity: string): Promise<string> {
   validateGitUrl(url);
   const dir = path.join(p.cacheDir, 'candidates', sha(identity));
-  if (await stat(dir)) return dir;
-  await fs.mkdir(path.dirname(dir), { recursive: true });
-  await git(['clone', '--depth', '1', url, dir]);
-  if (!(await stat(dir))) throw new Error(`git clone did not produce ${dir}`);
+  if (!(await stat(dir))) {
+    await fs.mkdir(path.dirname(dir), { recursive: true });
+    await git(['clone', '--depth', '1', url, dir]);
+    if (!(await stat(dir))) throw new Error(`git clone did not produce ${dir}`);
+  }
+  await sanitizeClone(dir);
   return dir;
+}
+
+async function realWithin(root: string, target: string): Promise<boolean> {
+  try {
+    return within(await fs.realpath(root), await fs.realpath(target));
+  } catch {
+    return false;
+  }
 }
 
 const repoBase = (url: string): string => path.basename(url.replace(/\/+$/, '').replace(/\.git$/, '').replace(/:/g, '/')) || 'candidate';
@@ -158,12 +195,13 @@ async function loadDir(root: string, fallbackName: string): Promise<{ sources: S
 }
 
 async function loadLoneSkill(file: string): Promise<{ sources: Source[]; items: Item[] }> {
-  const dir = path.dirname(file);
-  const kept: string[] = [];
-  const found = (await readSkills(path.dirname(dir), 'candidate', null, (m) => m.includes(file) && kept.push(m))).filter((i) => i.path === file);
-  if (!found.length) throw new Error(`No skill found in ${file}`);
-  const name = found[0].name;
-  return { sources: [pluginSource(name)], items: finish(`candidate:${name}`, found.map((i) => ({ ...i, id: `skill:candidate:${name}:${i.name}` }))) };
+  const text = await readText(file);
+  if (text === null) throw new Error(`No skill found in ${file}`);
+  const fm = parseFrontmatter(text);
+  const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+  const name = str(fm.data.name) || path.basename(path.dirname(file));
+  const item: Item = { id: `skill:candidate:${name}:${name}`, kind: 'skill', name, fullName: name, sourceId: `candidate:${name}`, path: file, description: str(fm.data.description), enabled: true, decidedBy: null };
+  return { sources: [pluginSource(name)], items: finish(`candidate:${name}`, [item]) };
 }
 
 async function loadMarketplace(input: { marketplace: string; plugin: string }, p: ClaudePaths, git: GitRunner) {
@@ -194,7 +232,7 @@ async function loadMarketplace(input: { marketplace: string; plugin: string }, p
   let root: string;
   if (typeof src === 'string') {
     root = path.resolve(mktRoot, src);
-    if (!within(mktRoot, root)) throw new Error(`Plugin source escapes the marketplace: ${src}`);
+    if (!within(mktRoot, root) || !(await realWithin(mktRoot, root))) throw new Error(`Plugin source escapes the marketplace: ${src}`);
   } else if (isObj(src)) {
     const identity = `${input.marketplace}/${input.plugin}`;
     if (src.source === 'github' && typeof src.repo === 'string') root = await cloneInto(`https://github.com/${src.repo}.git`, p, git, identity);
@@ -202,7 +240,7 @@ async function loadMarketplace(input: { marketplace: string; plugin: string }, p
       root = await cloneInto(src.url, p, git, identity);
       if (src.source === 'git-subdir' && typeof src.path === 'string') {
         const sub = path.resolve(root, src.path);
-        if (!within(root, sub)) throw new Error(`Plugin subdirectory escapes the repository: ${src.path}`);
+        if (!within(root, sub) || !(await realWithin(root, sub))) throw new Error(`Plugin subdirectory escapes the repository: ${src.path}`);
         root = sub;
       }
     } else throw new Error(`Unsupported plugin source for ${input.plugin}`);
