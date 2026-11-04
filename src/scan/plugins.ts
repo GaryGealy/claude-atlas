@@ -136,6 +136,50 @@ async function mcpFrom(root: string, manifest: Record<string, unknown>, warn: Wa
   return out;
 }
 
+/** Reads one plugin-shaped directory (manifest custom paths, default dirs, hooks, MCP); enabled/decidedBy are left at defaults. */
+export async function readPluginDir(
+  root: string,
+  sourceId: string,
+  ns: string,
+  warn: Warn,
+): Promise<{ items: Item[]; pluginMcp: unknown[]; manifest: Record<string, unknown> }> {
+  const manifestRaw = await readJson(path.join(root, '.claude-plugin', 'plugin.json'), warn);
+  const manifest = isObj(manifestRaw) ? manifestRaw : {};
+    const skills = [
+      ...(await readSkills(path.join(root, 'skills'), sourceId, ns, warn)),
+      ...(await Promise.all(customPaths(root, manifest.skills).map((d) => readSkills(d, sourceId, ns, warn)))).flat(),
+    ];
+    const agents = [
+      ...(await readAgents(path.join(root, 'agents'), sourceId, ns, warn)),
+      ...(await readEntries(customPaths(root, manifest.agents), (d) => readAgents(d, sourceId, ns, warn))),
+    ];
+    const commands = [
+      ...(await readCommands(path.join(root, 'commands'), sourceId, ns, warn)),
+      ...(await readEntries(customPaths(root, manifest.commands), (d) => readCommands(d, sourceId, ns, warn))),
+    ];
+
+    const resolver = pluginScriptResolver(root);
+    const hooks: Item[] = [];
+    const hooksFile = path.join(root, 'hooks', 'hooks.json');
+    const fileHooks = await readJson(hooksFile, warn);
+    if (fileHooks !== null) hooks.push(...(await readHooks(fileHooks, sourceId, hooksFile, resolver)));
+    const inlineHooks = manifest.hooks;
+    const inlineSources: { json: unknown; file: string }[] = [];
+    if (isObj(inlineHooks)) inlineSources.push({ json: inlineHooks, file: path.join(root, '.claude-plugin', 'plugin.json') });
+    else for (const f of customPaths(root, inlineHooks)) inlineSources.push({ json: await readJson(f, warn), file: f });
+    for (const h of inlineSources) {
+      if (h.json === null) continue;
+      for (const it of await readHooks(h.json, sourceId, h.file, resolver)) {
+        const taken = new Set(hooks.map((x) => x.id));
+        let id = it.id;
+        for (let n = 1; taken.has(id); n++) id = `${it.id}:${n}`;
+        hooks.push({ ...it, id });
+      }
+    }
+
+  return { items: uniqueById([...skills, ...agents, ...commands, ...hooks]), pluginMcp: await mcpFrom(root, manifest, warn), manifest };
+}
+
 export async function scanPlugins(
   p: ClaudePaths,
   projectDir: string | null,
@@ -175,39 +219,9 @@ export async function scanPlugins(
       plugin: { name: c.name, marketplace: c.marketplace, version, installPath: c.installPath, scope: c.scope },
     });
 
-    const skills = [
-      ...(await readSkills(path.join(root, 'skills'), sourceId, c.name, warn)),
-      ...(await Promise.all(customPaths(root, manifest.skills).map((d) => readSkills(d, sourceId, c.name, warn)))).flat(),
-    ];
-    const agents = [
-      ...(await readAgents(path.join(root, 'agents'), sourceId, c.name, warn)),
-      ...(await readEntries(customPaths(root, manifest.agents), (d) => readAgents(d, sourceId, c.name, warn))),
-    ];
-    const commands = [
-      ...(await readCommands(path.join(root, 'commands'), sourceId, c.name, warn)),
-      ...(await readEntries(customPaths(root, manifest.commands), (d) => readCommands(d, sourceId, c.name, warn))),
-    ];
+    const { items: pluginItems, pluginMcp: mcpJsons } = await readPluginDir(root, sourceId, c.name, warn);
 
-    const resolver = pluginScriptResolver(root);
-    const hooks: Item[] = [];
-    const hooksFile = path.join(root, 'hooks', 'hooks.json');
-    const fileHooks = await readJson(hooksFile, warn);
-    if (fileHooks !== null) hooks.push(...(await readHooks(fileHooks, sourceId, hooksFile, resolver)));
-    const inlineHooks = manifest.hooks;
-    const inlineSources: { json: unknown; file: string }[] = [];
-    if (isObj(inlineHooks)) inlineSources.push({ json: inlineHooks, file: path.join(root, '.claude-plugin', 'plugin.json') });
-    else for (const f of customPaths(root, inlineHooks)) inlineSources.push({ json: await readJson(f, warn), file: f });
-    for (const h of inlineSources) {
-      if (h.json === null) continue;
-      for (const it of await readHooks(h.json, sourceId, h.file, resolver)) {
-        const taken = new Set(hooks.map((x) => x.id));
-        let id = it.id;
-        for (let n = 1; taken.has(id); n++) id = `${it.id}:${n}`;
-        hooks.push({ ...it, id });
-      }
-    }
-
-    for (const it of uniqueById([...skills, ...agents, ...commands, ...hooks])) {
+    for (const it of pluginItems) {
       let itemEnabled = enabled;
       let itemDecidedBy = decidedBy;
       if (it.kind === 'skill') {
@@ -220,7 +234,7 @@ export async function scanPlugins(
       items.push({ ...it, enabled: itemEnabled, decidedBy: itemDecidedBy });
     }
 
-    for (const json of await mcpFrom(root, manifest, warn)) pluginMcp.push({ sourceId, json });
+    for (const json of mcpJsons) pluginMcp.push({ sourceId, json });
   }
   return { sources, items, pluginMcp };
 }

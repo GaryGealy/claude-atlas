@@ -201,3 +201,8 @@ export function execClaudeMcpList(projectDir: string): Promise<string> {
 export async function liveMcpStatus(projectDir: string, run: (dir: string) => Promise<string> = execClaudeMcpList): Promise<McpListEntry[]> {
   return parseMcpList(await run(projectDir));
 }
+
+/** MCP server items from a `{mcpServers}` JSON blob, masked like every other MCP item (names only, sanitized endpoints). */
+export function mcpItemsFrom(sourceId: string, json: unknown, file: string): Item[] {
+  return serversOf(json).map(([n, c]) => toItem(sourceId, n, c, file));
+}
