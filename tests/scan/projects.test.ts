@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fixtureHome } from '../fixtures.js';
 import { encodeProjectDir, listProjects } from '../../src/scan/projects.js';
@@ -37,5 +38,22 @@ describe('listProjects', () => {
     const list = await listProjects(paths);
     expect(list.map((e) => e.path)).toContain(extra);
     expect(list.map((e) => e.path)).toContain(projects.ringZero);
+  });
+
+  it('drops existing temp-dir projects outside home but keeps those under home', async () => {
+    const { paths, projects } = fixtureHome();
+    // A real directory under a temp prefix (/private/var/folders on macOS, /tmp on Linux), outside p.home.
+    const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-proj-')));
+    try {
+      expect(['/private/var/folders/', '/var/folders/', '/tmp/'].some((t) => tmp.startsWith(t))).toBe(true);
+      const cj = JSON.parse(fs.readFileSync(paths.claudeJson, 'utf8'));
+      cj.projects[tmp] = {};
+      fs.writeFileSync(paths.claudeJson, JSON.stringify(cj));
+      const ps = (await listProjects(paths)).map((e) => e.path);
+      expect(ps).not.toContain(tmp);
+      expect(ps).toContain(projects.ringZero); // itself under a temp prefix, kept because it is under home
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

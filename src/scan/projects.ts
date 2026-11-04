@@ -105,7 +105,9 @@ export async function listProjects(p: ClaudePaths): Promise<ProjectEntry[]> {
 
   const entries: ProjectEntry[] = [];
   for (const dir of candidates) {
-    // Temp dirs are noise, unless they live under the configured home (e.g. test fixtures).
+    // Temp dirs are noise, unless they live under the configured home. The exemption exists because
+    // fixtureHome() is itself created in os.tmpdir() (/private/var/folders on macOS); without it every
+    // fixture project would be filtered. A real home is never under a temp prefix.
     const underHome = dir === p.home || dir.startsWith(p.home + path.sep);
     if (!underHome && TEMP_PREFIXES.some((t) => dir.startsWith(t))) continue;
     if (!(await isDir(dir))) continue;
