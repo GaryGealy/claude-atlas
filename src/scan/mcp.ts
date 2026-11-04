@@ -23,12 +23,33 @@ function sanitizeUrl(raw: string): string {
   }
 }
 
-/** Strips query, fragment and userinfo from URLs; for a command line, sanitizes any URL-looking word. */
+const URL_RE = /[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi;
+const SECRET_NAME = /key|token|secret|password|passwd|auth|bearer|credential/i;
+
+/** Strips query, fragment and userinfo from every URL in the string, and redacts Bearer/Basic values. */
 export function sanitizeEndpoint(urlOrCommand: string): string {
-  return urlOrCommand
-    .split(' ')
-    .map((w) => (/^[a-z][a-z0-9+.-]*:\/\//i.test(w) ? sanitizeUrl(w) : w))
-    .join(' ');
+  return urlOrCommand.replace(URL_RE, sanitizeUrl).replace(/\b(Bearer|Basic)\s+\S+/gi, '$1 ***');
+}
+
+/** Redacts secret-looking values in stdio args: flag values, NAME=value, Bearer/Basic. */
+function redactArgs(args: string[]): string[] {
+  const out: string[] = [];
+  let redactNext = false;
+  for (const a of args) {
+    if (redactNext && !a.startsWith('-')) {
+      out.push('***');
+      redactNext = false;
+      continue;
+    }
+    redactNext = false;
+    const m = /^(-{1,2}[^=\s]+)(=)(.*)$/.exec(a) ?? /^([A-Za-z_][\w.-]*)(=)(.*)$/.exec(a);
+    if (m && SECRET_NAME.test(m[1])) out.push(`${m[1]}=***`);
+    else if (/^-{1,2}[^=\s]+$/.test(a) && SECRET_NAME.test(a)) {
+      out.push(a);
+      redactNext = true;
+    } else out.push(a);
+  }
+  return out;
 }
 
 async function readJson(file: string): Promise<unknown> {
@@ -53,7 +74,7 @@ function toItem(sourceId: string, name: string, cfg: unknown, file: string): Ite
   const transport: Mcp['transport'] =
     type === 'stdio' || type === 'http' || type === 'sse' ? type : url ? 'http' : command ? 'stdio' : 'unknown';
   const args = Array.isArray(c.args) ? c.args.filter((a): a is string => typeof a === 'string') : [];
-  const raw = url ?? (command ? [command, ...args].join(' ') : '');
+  const raw = url ?? (command ? [command, ...redactArgs(args)].join(' ') : '');
   const endpoint = sanitizeEndpoint(raw);
   return {
     id: `mcp-server:${sourceId}:${name}`,
@@ -71,6 +92,29 @@ function toItem(sourceId: string, name: string, cfg: unknown, file: string): Ite
 
 function serversOf(json: unknown): [string, unknown][] {
   return isObj(json) && isObj(json.mcpServers) ? Object.entries(json.mcpServers) : [];
+}
+
+type Approvals = { enableAll: string | null; enabled: Map<string, string>; disabled: Map<string, string> };
+
+/** Approval keys live in ~/.claude.json projects[dir] and in every settings layer; disabled anywhere wins. */
+async function readApprovals(p: ClaudePaths, projectDir: string, proj: unknown): Promise<Approvals> {
+  const layers: [string, unknown][] = [[p.claudeJson, proj]];
+  for (const f of [
+    path.join(p.claudeDir, 'settings.json'),
+    path.join(p.claudeDir, 'settings.local.json'),
+    path.join(projectDir, '.claude', 'settings.json'),
+    path.join(projectDir, '.claude', 'settings.local.json'),
+    path.join(p.managedDir, 'managed-settings.json'),
+  ])
+    layers.push([f, await readJson(f)]);
+  const ap: Approvals = { enableAll: null, enabled: new Map(), disabled: new Map() };
+  for (const [file, j] of layers) {
+    if (!isObj(j)) continue;
+    if (j.enableAllProjectMcpServers === true && !ap.enableAll) ap.enableAll = file;
+    for (const n of strList(j.enabledMcpjsonServers)) if (!ap.enabled.has(n)) ap.enabled.set(n, file);
+    for (const n of strList(j.disabledMcpjsonServers)) if (!ap.disabled.has(n)) ap.disabled.set(n, file);
+  }
+  return ap;
 }
 
 const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
@@ -97,22 +141,24 @@ export async function scanMcp(
   }
 
   const mcpJson = path.join(projectDir, '.mcp.json');
-  const enabledAll = isObj(proj) && proj.enableAllProjectMcpServers === true;
-  const enabled = strList(isObj(proj) ? proj.enabledMcpjsonServers : null);
-  const disabled = strList(isObj(proj) ? proj.disabledMcpjsonServers : null);
+  const ap = await readApprovals(p, projectDir, proj);
   for (const [n, c] of serversOf(await readJson(mcpJson))) {
     const it = toItem('project', n, c, mcpJson);
-    const approved = disabled.includes(n) ? false : enabledAll || enabled.includes(n) ? true : null;
-    it.mcp!.approved = approved;
-    if (approved === false) {
+    const dis = ap.disabled.get(n);
+    const en = ap.enabled.get(n) ?? ap.enableAll;
+    if (dis) {
+      it.mcp!.approved = false;
       it.enabled = false;
-      it.decidedBy = p.claudeJson;
+      it.decidedBy = dis;
+    } else if (en) {
+      it.mcp!.approved = true;
+      it.decidedBy = en;
     }
     items.push(it);
   }
 
   for (const pm of pluginMcp) {
-    for (const [n, c] of serversOf(pm.json)) items.push(toItem(pm.sourceId, n, c, `plugin:${pm.sourceId}`));
+    for (const [n, c] of serversOf(pm.json)) items.push(toItem(pm.sourceId, n, c, ''));
   }
 
   sources.push({ id: 'connectors', kind: 'connectors', label: 'claude.ai connectors', enabled: true, decidedBy: null });

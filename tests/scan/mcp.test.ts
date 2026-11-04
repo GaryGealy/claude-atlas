@@ -64,11 +64,51 @@ describe('scanMcp', () => {
     const x = r.items.find((i) => i.id === 'mcp-server:plugin:sp:x')!;
     expect(x.mcp).toMatchObject({ transport: 'http', endpoint: 'https://h.io/m', headerKeys: ['Authorization'] });
     expect(JSON.stringify(r)).not.toContain('SECRET789');
-    expect(path.isAbsolute(r.items[0].path) || r.items[0].path.startsWith('plugin:')).toBe(true);
+    expect(x.path).toBe('');
+  });
+});
+
+describe('stdio arg redaction and settings-layer approvals', () => {
+  it('redacts secret args but keeps flag names', async () => {
+    const { paths, projects } = fixtureHome();
+    const j = JSON.parse(fs.readFileSync(paths.claudeJson, 'utf8'));
+    j.mcpServers.s = { command: 'npx', args: ['srv', '--api-key', 'SECRET1', '--token=SECRET2', 'API_KEY=SECRET3', 'Authorization: Bearer SECRET4', '--port', '80'] };
+    fs.writeFileSync(paths.claudeJson, JSON.stringify(j));
+    const r = await scanMcp(paths, projects.ringZero, []);
+    const s = JSON.stringify(r);
+    for (const x of ['SECRET1', 'SECRET2', 'SECRET3', 'SECRET4']) expect(s).not.toContain(x);
+    expect(r.items.find((i) => i.id === 'mcp-server:mcp:user:s')!.mcp!.endpoint).toBe(
+      'npx srv --api-key *** --token=*** API_KEY=*** Authorization: Bearer *** --port 80',
+    );
+  });
+
+  it('approval from project settings.local.json, decidedBy points there; disabled in another layer wins', async () => {
+    const { paths, projects } = fixtureHome();
+    const dir = path.join(projects.ringZero, '.claude');
+    fs.mkdirSync(dir, { recursive: true });
+    const local = path.join(dir, 'settings.local.json');
+    fs.writeFileSync(local, JSON.stringify({ enabledMcpjsonServers: ['unapproved'], enableAllProjectMcpServers: false }));
+    let r = await scanMcp(paths, projects.ringZero, []);
+    let u = r.items.find((i) => i.id === 'mcp-server:project:unapproved')!;
+    expect(u.mcp!.approved).toBe(true);
+    expect(u.decidedBy).toBe(local);
+    fs.mkdirSync(paths.claudeDir, { recursive: true });
+    const userS = path.join(paths.claudeDir, 'settings.json');
+    fs.writeFileSync(userS, JSON.stringify({ disabledMcpjsonServers: ['unapproved'] }));
+    r = await scanMcp(paths, projects.ringZero, []);
+    u = r.items.find((i) => i.id === 'mcp-server:project:unapproved')!;
+    expect(u.mcp!.approved).toBe(false);
+    expect(u.enabled).toBe(false);
+    expect(u.decidedBy).toBe(userS);
   });
 });
 
 describe('sanitizeEndpoint', () => {
+  it('strips URLs embedded in flags and quotes', () => {
+    expect(sanitizeEndpoint('x --url=https://h/x?token=T')).toBe('x --url=https://h/x');
+    expect(sanitizeEndpoint('x "https://h/x?k=v"')).toBe('x "https://h/x"');
+    expect(sanitizeEndpoint("x 'https://u:p@h/x?k=v#f'")).toBe("x 'https://h/x'");
+  });
   it('strips userinfo, query, fragment, also in command args', () => {
     expect(sanitizeEndpoint('https://u:p@h.io/a?k=v#f')).toBe('https://h.io/a');
     expect(sanitizeEndpoint('npx mcp-remote https://h.io/a?token=T')).toBe('npx mcp-remote https://h.io/a');
