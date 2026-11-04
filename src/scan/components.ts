@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Item } from '../model.js';
 import { readHead, readText, walkDirs } from '../util/fs.js';
 import { parseFrontmatter } from '../util/frontmatter.js';
+import { redactText } from '../util/redact.js';
 
 type Warn = (m: string) => void;
 
@@ -208,7 +209,9 @@ export async function readHooks(
       for (const h of group.hooks) {
         if (!isObj(h) || h.type !== 'command' || typeof h.command !== 'string') continue;
         const bodies = await resolveScript(h.command);
-        const text = [h.command, ...bodies].join('\n').slice(0, HOOK_TEXT_MAX);
+        // Secrets never reach the model: the command and resolved scripts are redacted before they are stored.
+        const command = redactText(h.command);
+        const text = redactText([h.command, ...bodies].join('\n')).slice(0, HOOK_TEXT_MAX);
         items.push({
           id: `hook:${sourceId}:${event}:${index}`,
           kind: 'hook',
@@ -216,10 +219,10 @@ export async function readHooks(
           fullName: event,
           sourceId,
           path: filePath,
-          description: h.command,
+          description: command,
           enabled: true,
           decidedBy: null,
-          hook: { event, matcher, command: h.command, text, mentionsSkills: mentionsSkills(h.command, bodies) },
+          hook: { event, matcher, command, text, mentionsSkills: mentionsSkills(h.command, bodies) },
         });
         index++;
       }

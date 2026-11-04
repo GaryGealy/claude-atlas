@@ -3,54 +3,15 @@ import path from 'node:path';
 import type { ClaudePaths } from '../paths.js';
 import type { Item, Source } from '../model.js';
 import { readText } from '../util/fs.js';
+import { redactArgs, redactText, sanitizeEndpoint } from '../util/redact.js';
+
+export { sanitizeEndpoint };
 
 type Mcp = NonNullable<Item['mcp']>;
 type Live = NonNullable<Mcp['live']>;
 export type McpListEntry = { name: string; endpoint: string; status: Live };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-
-function sanitizeUrl(raw: string): string {
-  try {
-    const u = new URL(raw);
-    u.username = '';
-    u.password = '';
-    u.search = '';
-    u.hash = '';
-    return u.toString();
-  } catch {
-    return raw.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#@\s]*@/i, '$1').replace(/[?#].*$/, '');
-  }
-}
-
-const URL_RE = /[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi;
-const SECRET_NAME = /key|token|secret|password|passwd|auth|bearer|credential/i;
-
-/** Strips query, fragment and userinfo from every URL in the string, and redacts Bearer/Basic values. */
-export function sanitizeEndpoint(urlOrCommand: string): string {
-  return urlOrCommand.replace(URL_RE, sanitizeUrl).replace(/\b(Bearer|Basic)\s+\S+/gi, '$1 ***');
-}
-
-/** Redacts secret-looking values in stdio args: flag values, NAME=value, Bearer/Basic. */
-function redactArgs(args: string[]): string[] {
-  const out: string[] = [];
-  let redactNext = false;
-  for (const a of args) {
-    if (redactNext && !a.startsWith('-')) {
-      out.push('***');
-      redactNext = false;
-      continue;
-    }
-    redactNext = false;
-    const m = /^(-{1,2}[^=\s]+)(=)(.*)$/.exec(a) ?? /^([A-Za-z_][\w.-]*)(=)(.*)$/.exec(a);
-    if (m && SECRET_NAME.test(m[1])) out.push(`${m[1]}=***`);
-    else if (/^-{1,2}[^=\s]+$/.test(a) && SECRET_NAME.test(a)) {
-      out.push(a);
-      redactNext = true;
-    } else out.push(a);
-  }
-  return out;
-}
 
 async function readJson(file: string): Promise<unknown> {
   const text = await readText(file);
@@ -74,8 +35,7 @@ function toItem(sourceId: string, name: string, cfg: unknown, file: string): Ite
   const transport: Mcp['transport'] =
     type === 'stdio' || type === 'http' || type === 'sse' ? type : url ? 'http' : command ? 'stdio' : 'unknown';
   const args = Array.isArray(c.args) ? c.args.filter((a): a is string => typeof a === 'string') : [];
-  const raw = url ?? (command ? [command, ...redactArgs(args)].join(' ') : '');
-  const endpoint = sanitizeEndpoint(raw);
+  const endpoint = url !== null ? sanitizeEndpoint(url) : command ? redactText([command, ...redactArgs(args)].join(' ')) : '';
   return {
     id: `mcp-server:${sourceId}:${name}`,
     kind: 'mcp-server',
@@ -187,7 +147,7 @@ export function parseMcpList(stdout: string): McpListEntry[] {
     const m = /^(.+?): (\S.*?)(?:\s+\((?:HTTP|SSE|http|sse)\))?$/.exec(head.trim());
     if (!m) continue;
     const status: Live = /[✔✓]|Connected/.test(tail) && !/Fail/i.test(tail) ? 'connected' : /[✗✘]|Fail/i.test(tail) ? 'failed' : 'unknown';
-    out.push({ name: m[1], endpoint: sanitizeEndpoint(m[2]), status });
+    out.push({ name: m[1], endpoint: redactText(m[2]), status });
   }
   return out;
 }

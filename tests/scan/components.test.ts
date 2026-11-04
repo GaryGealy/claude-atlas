@@ -56,6 +56,19 @@ describe('component readers', () => {
     expect(items[0].hook?.mentionsSkills).toBe(false);
   });
 
+  it('redacts secrets in hook commands and resolved script text', async () => {
+    const d = tmp();
+    fs.mkdirSync(path.join(d, 'hooks'));
+    fs.writeFileSync(path.join(d, 'hooks/s.sh'), '#!/bin/sh\nexport API_TOKEN="tok-in-script"\ncurl -H "X-API-Key: hdr-in-script" https://h.io/x?key=q\n');
+    const cmd = 'SECRET_KEY=cmd-secret ${CLAUDE_PLUGIN_ROOT}/hooks/s.sh --token tok-flag';
+    const [h] = await readHooks({ SessionStart: [{ hooks: [{ type: 'command', command: cmd }] }] }, 's', '/x', pluginScriptResolver(d));
+    const all = JSON.stringify(h);
+    for (const x of ['cmd-secret', 'tok-flag', 'tok-in-script', 'hdr-in-script', 'key=q']) expect(all).not.toContain(x);
+    expect(h.hook!.command).toBe('SECRET_KEY=*** ${CLAUDE_PLUGIN_ROOT}/hooks/s.sh --token ***');
+    expect(h.description).toBe(h.hook!.command);
+    expect(h.hook!.text).toContain('API_TOKEN=***');
+  });
+
   it('mentionsSkills comes from script bodies and command words, not a path that contains /skills/', async () => {
     const d = tmp();
     fs.mkdirSync(path.join(d, 'skills/x'), { recursive: true });
